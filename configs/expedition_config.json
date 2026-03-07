@@ -117,7 +117,7 @@
   },
 
   "scheduler": {
-    "tick_interval_seconds": 5
+    "tick_interval_seconds": 60
   },
 
   "db": {},

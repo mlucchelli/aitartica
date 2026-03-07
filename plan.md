@@ -9,35 +9,81 @@ The LLM drives all decisions through **recursive tool chaining** — it calls to
 ## Architecture
 
 -   **Recursive Tool Chaining**: LLM emits actions → runtime executes tools → results appended to context → LLM invoked again → repeat until `send_message` or `max_chain_depth = 6`
--   **Execution Semaphore**: Three states (`idle`, `llm_running`, `task_running`) — only one heavy process at a time; scheduler pauses when busy; console input disabled and shows task progress when busy
--   **Task Scheduler**: 5-second tick loop; generates due tasks (weather 4×/day); picks highest-priority pending task; streams execution output to terminal
+-   **Execution Semaphore**: Four states (`idle`, `user_typing`, `llm_running`, `task_running`) — the asyncio lock is held continuously from the moment the CLI shows the `❯` prompt through the entire LLM reply; scheduler can only run in the brief window between a reply finishing and the next prompt appearing
+-   **Task Scheduler**: 60-second tick loop; generates due weather tasks; picks the oldest pending task (FIFO, no priority); streams task progress to the scroll area while blocking the input prompt
+-   **HTTP Server is lock-free**: the HTTP server runs completely outside the semaphore — GPS coordinates are always stored and tasks always queued regardless of what the CLI is doing
 -   **HTTP Ingestion**: asyncio HTTP server (`POST /locations`) receives GPS from iPhone shortcut → inserts `process_location` task into `tasks` table
 -   **Repository Pattern**: Six SQLite tables each with a dedicated async repository (`aiosqlite`); fully decoupled from conversation state
 -   **All-Local LLM**: Ollama handles all LLM operations — `qwen2.5-vl` for vision description, a text model (e.g. `qwen2.5`) for chat and significance scoring; no external API calls
 -   **Remote Publishing**: Railway API receives daily JSON, route snapshots, weather snapshots, selected photos, and agent messages via multipart/form-data
 -   **Protocol-Based**: `LLMClient`, `StateStore`, `OutputHandler` remain swappable; all services follow constructor injection
 
+## Execution & Semaphore Model
+
+The semaphore lock is held for all four non-idle states. The HTTP server is the only component that never touches the semaphore.
+
+```mermaid
+graph TD
+    subgraph HTTP [HTTP Server — always running, no semaphore]
+        iPhone[iPhone POST /locations] --> InsertLoc[INSERT locations]
+        InsertLoc --> InsertTask[INSERT tasks FIFO]
+    end
+
+    subgraph CLI [CLI — asyncio loop]
+        Idle([semaphore: idle]) --> AcquireTyping[acquire_typing — lock acquired\nstate = user_typing]
+        AcquireTyping --> ShowPrompt[Show ❯ prompt\nawait input in executor]
+        ShowPrompt --> UserTypes[User types...]
+        UserTypes --> SchedulerCheck{Scheduler tick?}
+        SchedulerCheck -->|tries acquire| SkipLocked[Lock held → skip tick]
+        SkipLocked --> UserTypes
+        UserTypes --> Enter[User hits Enter]
+        Enter --> TransitionLLM[transition_to_llm\nstate = llm_running\nlock still held]
+        TransitionLLM --> ShowSpinner[Show ⠹ Thinking... spinner]
+        ShowSpinner --> LLMCall[LLMClient.ainvoke]
+        LLMCall --> ParseActions[Parse actions]
+        ParseActions --> IsFinal{Final action?}
+        IsFinal -->|tool action| ExecTool[Execute tool + stream result to scroll]
+        ExecTool --> LLMCall
+        IsFinal -->|send_message| Display[Display reply in scroll area]
+        Display --> Release[release — state = idle\nlock released]
+        Release --> AcquireTyping
+    end
+
+    subgraph Scheduler [Scheduler — 60s tick]
+        Tick[60s tick] --> TryAcquire{try acquire_task}
+        TryAcquire -->|lock free| RunTask[state = task_running\nlock acquired]
+        TryAcquire -->|lock held| SkipTick[skip — try again in 60s]
+        RunTask --> StreamProgress[Stream task progress\nto scroll area\nshow ⠹ spinner on input row]
+        StreamProgress --> TaskDone[task complete / failed]
+        TaskDone --> ReleaseTask[release — idle\nlock released]
+        ReleaseTask --> CLI
+    end
+```
+
+### Key invariant
+
+The CLI acquires the lock **before** showing the `❯` prompt and holds it until the agent finishes replying. This means:
+
+- **Typing** → lock held → scheduler cannot run
+- **Enter pressed** → lock stays held, state transitions to `llm_running`
+- **Agent replies** → lock released → scheduler gets one chance to run before CLI re-acquires for the next prompt
+- **Task running** → lock held → CLI waits at `acquire_typing()` showing the spinner; task progress streams to scroll area
+
+The HTTP server **never touches the lock** — GPS coordinates are always stored and tasks always queued, even mid-sentence.
+
 ## Conversation Flow
 
 ```mermaid
 graph TD
-    Start([User Input / Scheduled Task / HTTP Event]) --> Semaphore{Semaphore free?}
-    Semaphore -->|No| Buffer[Buffer input / skip tick]
-    Semaphore -->|Yes| Acquire[Acquire semaphore]
-    Acquire --> BuildPrompt[Build system prompt + messages + tool results]
-    BuildPrompt --> LLMCall[LLMClient.ainvoke]
-    LLMCall --> ParseActions[ActionParser.parse]
+    LLMCall[LLMClient.ainvoke] --> ParseActions[ActionParser.parse]
     ParseActions --> IsFinal{Final action?}
-    IsFinal -->|send_message| ExecuteFinal[Execute final action]
-    ExecuteFinal --> Display[Display to console — restore input]
-    Display --> Release[Release semaphore — semaphore = idle]
-    IsFinal -->|No — tool action| ExecuteTool[Execute tool — disable input, stream output]
-    ExecuteTool --> AppendResult[Append tool result to context]
+    IsFinal -->|send_message| Display[Display reply — release lock — idle]
+    IsFinal -->|tool action| ExecTool[Execute tool]
+    ExecTool --> AppendResult[Append result to context]
     AppendResult --> DepthCheck{depth >= 6?}
-    DepthCheck -->|Yes| ForceSend[Force send_message fallback]
-    ForceSend --> Release
+    DepthCheck -->|Yes| ForceSend[Force send_message]
+    ForceSend --> Display
     DepthCheck -->|No| LLMCall
-    Release --> Start
 ```
 
 ## Actions
@@ -302,12 +348,12 @@ src/agent/
 │   ├── actions.py           — 12 action types (11 tools + send_message)
 │   ├── photo.py             — PhotoRecord (mirrors photos table)
 │   ├── location.py          — LocationRecord
-│   ├── task.py              — TaskRecord (type, payload, status, priority)
+│   ├── task.py              — TaskRecord (type, payload, status — no priority, FIFO)
 │   └── state.py             — ConversationState (unchanged)
 ├── runtime/
 │   ├── runtime.py           — Recursive chaining loop + full RESPONSE_FORMAT schema
-│   ├── scheduler.py         — 5s tick loop — generates weather / publish tasks
-│   ├── semaphore.py         — ExecutionSemaphore (idle / llm_running / task_running)
+│   ├── scheduler.py         — 60s tick loop — generates weather tasks, FIFO task execution
+│   ├── semaphore.py         — ExecutionSemaphore (idle / user_typing / llm_running / task_running)
 │   ├── task_runner.py       — Dispatches 9 task types to services
 │   ├── parser.py            — Extended ACTION_REGISTRY (12 actions)
 │   └── protocols.py         — OutputHandler Protocol (unchanged)
@@ -337,11 +383,17 @@ data/
 ### Recursive tool chaining — LLM loops until `send_message`
 The runtime keeps invoking the LLM until it emits `send_message`. After each non-final action, the tool result is appended to the message context as a `tool` role message. `max_chain_depth = 6` prevents infinite loops — at depth 6 a forced `send_message` is injected.
 
-### Input disabled during any semaphore hold
-When `task_running` or `llm_running`, the CLI replaces the input row with a live status line: `⠹ task: scan_photo_inbox — step 2/7: running vision...`. Each task step calls `on_task_progress(step, detail)` on the `OutputHandler`, which streams to the scroll area in real time. Input is restored only when the semaphore returns to `idle`.
+### Semaphore lock is held for the full user interaction cycle
+The CLI calls `acquire_typing()` (which acquires the asyncio lock) before showing the `❯` prompt. When Enter is pressed, the state transitions to `llm_running` without releasing the lock. The lock is only released after the agent's final `send_message`. This guarantees the scheduler can never interrupt a conversation mid-reply, and can never fire while the user is typing. The scheduler gets at most one tick opportunity between the end of one reply and the start of the next prompt.
 
-### Task system is DB-backed, not in-memory
-Tasks persist in the `tasks` SQLite table (type, payload JSON, status, priority, created_at). Survives restarts. `TaskRunner` claims a task (`status=running`), executes it step by step, then marks `completed` or `failed`. Both the LLM (`create_task` action) and the HTTP server can enqueue tasks.
+### Input prompt is blocked while a background task runs
+When the scheduler picks up a task, it acquires the same lock. The CLI is then waiting at `acquire_typing()` — it cannot show the `❯` prompt until the task finishes. During this wait, the input row shows the spinner and task progress messages stream to the scroll area via `on_task_progress(message)`.
+
+### Task system is DB-backed FIFO, no priority
+Tasks persist in the `tasks` table (type, payload JSON, status, created_at). `claim_next()` picks the oldest `pending` task (`ORDER BY created_at ASC`). No priority field — insertion order is the only ordering guarantee. Survives restarts. The LLM (`create_task` action) and the HTTP server both enqueue tasks; neither is special-cased.
+
+### HTTP server is completely independent of the semaphore
+The asyncio HTTP server runs as a concurrent task and never acquires the semaphore. GPS coordinates from the iPhone are always stored and `process_location` tasks always queued immediately, regardless of what the CLI or scheduler is doing. The task queue accumulates freely; execution is just deferred until the lock is free.
 
 ### HTTP server uses asyncio — no framework dependency
 `asyncio.start_server` with a minimal HTTP parser handles `POST /locations`. Single endpoint, no routing needed. Runs as a concurrent asyncio task. No `aiohttp` / `fastapi` dependency added.
@@ -366,10 +418,10 @@ Row N         — Status: session | scheduler: next | tasks: N pending | tokens:
 ```
 
 -   Scroll region via ANSI `\033[1;{N-3}r` (unchanged from existing CLI)
--   When `semaphore != idle`: input row shows spinner + task name + current step (no `❯`)
--   `on_task_progress(step, detail)` prints each step to scroll area in real time
--   Input is buffered (not discarded) during semaphore hold; processed after `idle`
--   Status bar extended: scheduler next-tick time + pending task count
+-   When lock is held by a background task: input row shows spinner (no `❯`), CLI awaits lock release
+-   When lock is released by task: CLI immediately acquires for next input, `❯` reappears
+-   `on_task_progress(message)` appends task status lines to scroll area in real time during task execution
+-   Status bar extended: pending task count
 
 ## Configuration
 
@@ -383,7 +435,7 @@ All behavior driven by a single JSON file passed via `--config`:
   "system_prompt": { "template", "dynamic_sections" },
   "runtime":      { "max_chain_depth": 6 },
   "http_server":  { "host": "0.0.0.0", "port": 8080 },
-  "scheduler":    { "tick_interval_seconds": 5 },
+  "scheduler":    { "tick_interval_seconds": 60 },
   "db":           {},
   "photo_pipeline": {
     "significance_threshold": 0.75,
@@ -438,9 +490,9 @@ python -m agent --config configs/expedition_config.json --session <id>    # resu
 | 7  | DB layer: aiosqlite + 6 table repos (locations, photos, weather, tasks, messages, sessions) | Done     |
 | 8  | Models: LocationRecord, TaskRecord, PhotoRecord                              | Done     |
 | 9  | Delete old configs + create expedition_config.json                           | Done     |
-| 10 | HTTP server: POST /locations → process_location task                         | Planned  |
-| 11 | ExecutionSemaphore + Scheduler (5s tick, weather schedule)                   | Planned  |
-| 12 | Recursive runtime chaining (max_depth=6, tool result context appending)      | Planned  |
+| 10 | HTTP server: POST /locations → process_location task                         | Done     |
+| 11 | ExecutionSemaphore + Scheduler (60s tick, weather schedule)                  | Done     |
+| 12 | Semaphore redesign (lock-based typing, 4 states) + FIFO tasks (no priority) + CLI async input + recursive runtime chaining | Done     |
 | 13 | TaskRunner: dispatches all 9 task types + CLI task progress output           | Planned  |
 | 14 | ImagePreprocessingService (Pillow EXIF + resize) + OllamaClient              | Planned  |
 | 15 | PhotoService: full pipeline orchestration + significance scoring             | Planned  |

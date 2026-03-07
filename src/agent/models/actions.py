@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel
 
-from agent.models.state import ConversationState, StepInfo
+from agent.models.state import ConversationState
 
 
 class Action(BaseModel, ABC):
@@ -14,6 +14,8 @@ class Action(BaseModel, ABC):
     @abstractmethod
     async def execute(self, state: ConversationState) -> str | None: ...
 
+
+# ── Final action ──────────────────────────────────────────────────────────────
 
 class SendMessagePayload(BaseModel):
     content: str
@@ -28,49 +30,55 @@ class SendMessageAction(Action):
         return p.content
 
 
-class CollectFieldPayload(BaseModel):
-    field: str
-    value: str
-    confidence: float
+# ── Expedition tool actions ───────────────────────────────────────────────────
+# These are data containers only — execution is dispatched by the Runtime.
 
-
-class CollectFieldAction(Action):
-    type: str = "collect_field"
-    confidence_threshold: float = 0.0
+class ToolAction(Action, ABC):
+    """Base for all expedition tool actions. execute() is handled by Runtime._dispatch_tool."""
 
     async def execute(self, state: ConversationState) -> str | None:
-        p = CollectFieldPayload.model_validate(self.payload)
-        if p.confidence < self.confidence_threshold:
-            return f"[rejected: {p.field} confidence {p.confidence:.0%} below threshold]"
-        state.collect_field(p.field, p.value, p.confidence)
-        return None
+        return None  # never called directly
 
 
-class UpdateStatePayload(BaseModel):
-    steps: list[StepInfo] | None = None
-    total_attempts: int | None = None
+class GetLatestLocationsAction(ToolAction):
+    type: str = "get_latest_locations"
 
 
-class UpdateStateAction(Action):
-    type: str = "update_state"
-
-    async def execute(self, state: ConversationState) -> str | None:
-        p = UpdateStatePayload.model_validate(self.payload)
-        if p.steps is not None:
-            state.steps = p.steps
-        if p.total_attempts is not None:
-            state.total_attempts = p.total_attempts
-        return None
+class GetLocationsByDateAction(ToolAction):
+    type: str = "get_locations_by_date"
 
 
-class EscalatePayload(BaseModel):
-    reason: str
+class GetPhotosAction(ToolAction):
+    type: str = "get_photos"
 
 
-class EscalateAction(Action):
-    type: str = "escalate"
+class GetWeatherAction(ToolAction):
+    type: str = "get_weather"
 
-    async def execute(self, state: ConversationState) -> str | None:
-        p = EscalatePayload.model_validate(self.payload)
-        state.set_escalation(p.reason)
-        return None
+
+class CreateTaskAction(ToolAction):
+    type: str = "create_task"
+
+
+class ScanPhotoInboxAction(ToolAction):
+    type: str = "scan_photo_inbox"
+
+
+class PublishDailyProgressAction(ToolAction):
+    type: str = "publish_daily_progress"
+
+
+class PublishRouteSnapshotAction(ToolAction):
+    type: str = "publish_route_snapshot"
+
+
+class UploadImageAction(ToolAction):
+    type: str = "upload_image"
+
+
+class PublishAgentMessageAction(ToolAction):
+    type: str = "publish_agent_message"
+
+
+class PublishWeatherSnapshotAction(ToolAction):
+    type: str = "publish_weather_snapshot"

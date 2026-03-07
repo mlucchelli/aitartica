@@ -24,6 +24,7 @@ _MASCOT_LINES = [
 
 if TYPE_CHECKING:
     from agent.runtime.runtime import Runtime
+    from agent.runtime.semaphore import ExecutionSemaphore
 
 
 def _is_real_terminal() -> bool:
@@ -38,16 +39,16 @@ class CLI:
     """Implements OutputHandler and runs the chat loop.
 
     Terminal layout (when TTY is available):
-        Rows 1..(N-2)  — scroll area: chat messages, actions, thinking
-        Row  N-1        — input line (fixed): > user types here
-        Row  N          — status bar (fixed): session, step, fields, tokens
+        Rows 1..(N-3)  — scroll area: chat messages, tool results, task progress
+        Row  N-2        — rule separator
+        Row  N-1        — input line (❯) OR spinner (during semaphore hold)
+        Row  N          — status bar: session | tasks pending | tokens
     """
 
     def __init__(self, config: Config, debug: bool = False) -> None:
         self._config = config
         self._console = Console()
         self._debug = debug
-        self._fields = [(f.name, f.display_name) for f in config.fields]
         self._last_state: dict | None = None
         self._session_id: str = ""
         self._total_tokens: int = 0
@@ -55,7 +56,7 @@ class CLI:
 
     # -- Banner ------------------------------------------------------------
 
-    _INFO_COL = 20  # fixed column where info text starts
+    _INFO_COL = 20
 
     def _render_banner(self) -> None:
         info_lines = [
@@ -100,17 +101,12 @@ class CLI:
     def on_action_start(self, action_type: str) -> None:
         self._console.print(f"  [dim]executing: {action_type}[/dim]")
 
+    def on_task_progress(self, message: str) -> None:
+        self._console.print(f"  [dim cyan]⟳ {escape(message)}[/dim cyan]")
+
     def display(self, content: str) -> None:
-        # Debug: show final state once, right before the agent message
         if self._debug and self._last_state:
-            summary = {
-                "collected_fields": self._last_state.get("collected_fields", {}),
-                "steps": self._last_state.get("steps", []),
-                "total_attempts": self._last_state.get("total_attempts", 0),
-                "escalated": self._last_state.get("escalated", False),
-                "escalation_reason": self._last_state.get("escalation_reason"),
-            }
-            raw = json.dumps(summary, indent=2, default=str)
+            raw = json.dumps(self._last_state, indent=2, default=str)
             self._console.print(Panel(
                 raw, title="DEBUG state", border_style="cyan", style="dim",
             ))
@@ -130,35 +126,11 @@ class CLI:
     # -- Status bar (row N) ------------------------------------------------
 
     def _build_status_text(self) -> Text:
-        parts: list[str] = []
-        parts.append(f"session: {self._session_id}")
-
-        if self._last_state:
-            steps = self._last_state.get("steps", [])
-            current = next(
-                (s["step_key"] for s in steps if s["status"] == "in_progress"),
-                None,
-            ) or next(
-                (s["step_key"] for s in reversed(steps) if s["status"] != "pending"),
-                "\u2014",
-            )
-            parts.append(f"step: {current}")
-
-        collected = set()
-        if self._last_state:
-            collected = set(self._last_state.get("collected_fields", {}).keys())
-
-        field_parts = []
-        for name, display in self._fields:
-            marker = "[green]\u2713[/green]" if name in collected else "[dim]\u2026[/dim]"
-            field_parts.append(f"{display} {marker}")
-        parts.append(" | ".join(field_parts))
-
+        parts: list[str] = [f"session: {self._session_id}"]
         parts.append(f"tokens: {self._total_tokens:,}")
         return Text.from_markup(" [dim]\u2502[/dim] ".join(parts))
 
     def _render_status_bar(self) -> None:
-        """Write status bar on the last terminal row (uses ANSI save/restore)."""
         if not self._has_tty:
             return
         rows = self._rows()
@@ -177,10 +149,10 @@ class CLI:
     _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
     @asynccontextmanager
-    async def _thinking(self):
+    async def _thinking(self, label: str = "Thinking..."):
         """Animated spinner on the input row while inside the context."""
         if not self._has_tty:
-            self._console.print("[dim]Thinking...[/dim]")
+            self._console.print(f"[dim]{label}[/dim]")
             yield
             return
 
@@ -191,7 +163,7 @@ class CLI:
                 rows = self._rows()
                 self._write(f"\033[s\033[{rows - 1};1H\033[2K")
                 self._console.print(
-                    f"[bold yellow]❯ [/bold yellow][dim]{frames[i]} Thinking...[/dim]",
+                    f"[bold yellow]❯ [/bold yellow][dim]{frames[i]} {label}[/dim]",
                     end="",
                 )
                 self._write("\033[u")
@@ -209,7 +181,6 @@ class CLI:
                 pass
 
     def _render_input_area(self) -> None:
-        """Draw rule separator on row N-2 and clear input row N-1."""
         if not self._has_tty:
             return
         rows = self._rows()
@@ -218,68 +189,89 @@ class CLI:
         self._write(f"\033[{rows - 1};1H\033[2K")
         self._write("\033[u")
 
-    def _get_input(self) -> str | None:
-        """Move cursor to input row, get input, then return cursor to scroll area."""
+    async def _get_input_async(self) -> str | None:
+        """Non-blocking input — ANSI setup on main thread, blocking input() in executor."""
         if not self._has_tty:
-            return self.get_user_input()
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.get_user_input)
 
         rows = self._rows()
-        # Save scroll area cursor (DEC), draw input area, move to input row
         self._write("\0337")
         self._render_input_area()
         self._write(f"\033[{rows - 1};1H\033[2K")
         try:
-            result = self._console.input("[bold yellow]❯ [/bold yellow]")
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self._console.input("[bold yellow]❯ [/bold yellow]"),
+            )
         except (EOFError, KeyboardInterrupt):
             result = None
-
-        # Clear input row, restore scroll area cursor (DEC)
         self._write(f"\033[{rows - 1};1H\033[2K\0338")
         return result
 
     # -- Terminal setup/teardown -------------------------------------------
 
     def _setup_terminal(self) -> None:
-        """Set scroll region to rows 1..(N-3), leaving N-2, N-1 and N fixed.
-
-        Row N-2: rule separator
-        Row N-1: input prompt
-        Row N:   status bar
-        """
         if not self._has_tty:
             return
         rows = self._rows()
-        self._write("\033[2J")                # clear screen
-        self._write(f"\033[1;{rows - 3}r")    # scroll region
-        self._write("\033[1;1H")              # cursor to top of scroll area
+        self._write("\033[2J")
+        self._write(f"\033[1;{rows - 3}r")
+        self._write("\033[1;1H")
 
     def _teardown_terminal(self) -> None:
         if not self._has_tty:
             return
-        self._write("\033[r")                 # reset scroll region
+        self._write("\033[r")
         rows = self._rows()
-        self._write(f"\033[{rows};1H\n")      # cursor to bottom
+        self._write(f"\033[{rows};1H\n")
 
     # -- Main loop ---------------------------------------------------------
 
-    async def run(self, runtime: Runtime) -> None:
+    async def run(
+        self,
+        runtime: Runtime,
+        semaphore: ExecutionSemaphore | None = None,
+    ) -> None:
         self._setup_terminal()
         self._render_banner()
-        self._session_id = await runtime.start_session()  # greeting prints in scroll area
+        self._session_id = await runtime.start_session()
         self._render_status_bar()
 
         try:
             while True:
-                user_input = self._get_input()
+                # Wait for any running background task to finish, then acquire the lock
+                if semaphore:
+                    if not semaphore.is_idle:
+                        async with self._thinking("Background task running..."):
+                            await semaphore.acquire_typing()
+                    else:
+                        await semaphore.acquire_typing()
+
+                user_input = await self._get_input_async()
+
                 if user_input is None or user_input.strip().lower() in ("quit", "exit"):
+                    if semaphore:
+                        semaphore.release()
                     break
+
                 if not user_input.strip():
+                    if semaphore:
+                        semaphore.release()
                     continue
 
-                # Echo user message in scroll area, animate spinner while processing
+                # Transition lock to llm_running — keep holding it
+                if semaphore:
+                    semaphore.transition_to_llm()
+
                 self._console.print(f"[bold yellow]❯ [/bold yellow]{user_input}")
                 async with self._thinking():
                     await runtime.process_message(self._session_id, user_input)
+
+                if semaphore:
+                    semaphore.release()
+
         finally:
             self._teardown_terminal()
             self._console.print("[dim]Goodbye![/dim]")

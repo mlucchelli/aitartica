@@ -4,26 +4,39 @@ import logging
 
 from agent.models.actions import (
     Action,
-    CollectFieldAction,
-    EscalateAction,
+    CreateTaskAction,
+    GetLatestLocationsAction,
+    GetLocationsByDateAction,
+    GetPhotosAction,
+    GetWeatherAction,
+    PublishAgentMessageAction,
+    PublishDailyProgressAction,
+    PublishRouteSnapshotAction,
+    PublishWeatherSnapshotAction,
+    ScanPhotoInboxAction,
     SendMessageAction,
-    UpdateStateAction,
+    UploadImageAction,
 )
 
 logger = logging.getLogger(__name__)
 
 ACTION_REGISTRY: dict[str, type[Action]] = {
     "send_message": SendMessageAction,
-    "collect_field": CollectFieldAction,
-    "update_state": UpdateStateAction,
-    "escalate": EscalateAction,
+    "get_latest_locations": GetLatestLocationsAction,
+    "get_locations_by_date": GetLocationsByDateAction,
+    "get_photos": GetPhotosAction,
+    "get_weather": GetWeatherAction,
+    "create_task": CreateTaskAction,
+    "scan_photo_inbox": ScanPhotoInboxAction,
+    "publish_daily_progress": PublishDailyProgressAction,
+    "publish_route_snapshot": PublishRouteSnapshotAction,
+    "upload_image": UploadImageAction,
+    "publish_agent_message": PublishAgentMessageAction,
+    "publish_weather_snapshot": PublishWeatherSnapshotAction,
 }
 
 
 class ActionParser:
-    def __init__(self, confidence_threshold: float = 0.0) -> None:
-        self._confidence_threshold = confidence_threshold
-
     def parse(self, raw_actions: list[dict]) -> list[Action]:
         actions: list[Action] = []
         for raw in raw_actions:
@@ -32,11 +45,6 @@ class ActionParser:
                 logger.warning("Unknown action type: %s — skipping", action_type)
                 continue
             cls = ACTION_REGISTRY[action_type]
-            if action_type == "collect_field":
-                action = CollectFieldAction.model_validate(
-                    {**raw, "confidence_threshold": self._confidence_threshold}
-                )
-            else:
-                action = cls.model_validate(raw)
-            actions.append(action)
+            payload = raw.get("payload", {})
+            actions.append(cls.model_validate({"type": action_type, "payload": payload}))
         return actions

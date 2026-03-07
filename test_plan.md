@@ -138,26 +138,83 @@ sqlite3 data/expedition.db "SELECT type, status, executed_at FROM tasks ORDER BY
 
 ---
 
-## Commit 12 — Recursive runtime chaining
+## Commit 12 — Semaphore redesign + FIFO tasks + CLI async input + recursive chaining
 
 ```bash
-python -m agent --config configs/expedition_config.json --debug
+source .venv/bin/activate
 
-# Type a question that requires multiple tool calls:
-❯ What were today's locations and what is the current weather?
+# 1. Semaphore: lock-based typing flow
+python3 -c "
+import asyncio
+from agent.runtime.semaphore import ExecutionSemaphore, SemaphoreState
 
-# Expected in scroll area (--debug shows each LLM pass):
-#   executing: get_locations_by_date
-#   [tool result appended]
-#   executing: get_weather
-#   [tool result appended]
-#   executing: send_message
-#   Agent: <summary combining both results>
+async def main():
+    sem = ExecutionSemaphore()
+    assert sem.is_idle
 
-# Verify chain depth never exceeded 6 (check logs for "max depth" warning)
-# Also test a simple question that resolves in one pass:
-❯ Hello
-# Expected: single LLM pass → send_message directly
+    # acquire_typing grabs the lock
+    await sem.acquire_typing()
+    assert sem.state == SemaphoreState.user_typing
+    assert not sem.is_idle
+
+    # transition_to_llm keeps the lock, changes state
+    sem.transition_to_llm()
+    assert sem.state == SemaphoreState.llm_running
+    assert not sem.is_idle
+
+    sem.release()
+    assert sem.is_idle
+
+    # acquire_task grabs the lock
+    await sem.acquire_task()
+    assert sem.state == SemaphoreState.task_running
+    sem.release()
+    assert sem.is_idle
+
+    print('Semaphore OK')
+
+asyncio.run(main())
+"
+
+# 2. Tasks are FIFO — no priority column in INSERT
+python3 -c "
+import asyncio
+from dotenv import load_dotenv
+load_dotenv()
+from agent.config.loader import Config
+from agent.db.database import Database
+from agent.db.tasks_repo import TasksRepository
+
+async def main():
+    config = Config.load('configs/expedition_config.json')
+    async with Database(config.db.path) as db:
+        repo = TasksRepository(db)
+        t1 = await repo.insert('fetch_weather', {})
+        t2 = await repo.insert('scan_photo_inbox', {})
+        first = await repo.claim_next()
+        assert first['id'] == t1['id'], 'Expected FIFO order'
+        print('FIFO OK — first task:', first['type'])
+
+asyncio.run(main())
+"
+
+# 3. Recursive chaining — start the agent and ask a question requiring tool use
+python3 -m agent --config configs/expedition_config.json --debug
+# (Ollama must be running with qwen3.5:9b pulled)
+# Type: show me the latest GPS locations
+# Expected:
+#   executing: get_latest_locations
+#   [tool result appended to context]
+#   Antartia: <reply based on location data>
+
+# 4. Task progress visible in scroll area
+# While agent is running, inject a task and watch scheduler pick it up:
+sqlite3 data/expedition.db \
+  "INSERT INTO tasks (type, payload, status, created_at) \
+   VALUES ('fetch_weather', '{}', 'pending', datetime('now'));"
+# Expected within 60s: ⟳ <progress message> appears in scroll area
+# Input row shows spinner while task runs
+# ❯ prompt returns after task completes
 ```
 
 ---

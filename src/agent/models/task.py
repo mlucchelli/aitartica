@@ -27,7 +27,6 @@ class TaskRecord(BaseModel):
     type: str
     payload: dict[str, Any] = Field(default_factory=dict)
     status: str = "pending"  # pending | running | completed | failed
-    priority: int = 1
     created_at: datetime = Field(default_factory=_now)
     started_at: datetime | None = None
     executed_at: datetime | None = None

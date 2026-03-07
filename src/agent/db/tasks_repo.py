@@ -22,23 +22,24 @@ class TasksRepository:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def insert(self, type: str, payload: dict, priority: int = 1) -> dict:
+    async def insert(self, type: str, payload: dict) -> dict:
+        """Insert a task — FIFO ordering by created_at."""
         created_at = datetime.now(timezone.utc).isoformat()
         async with self._db.conn.execute(
-            """INSERT INTO tasks (type, payload, status, priority, created_at)
-               VALUES (?, ?, 'pending', ?, ?)""",
-            (type, json.dumps(payload), priority, created_at),
+            """INSERT INTO tasks (type, payload, status, created_at)
+               VALUES (?, ?, 'pending', ?)""",
+            (type, json.dumps(payload), created_at),
         ) as cur:
             row_id = cur.lastrowid
         await self._db.conn.commit()
         return {"id": row_id, "type": type, "payload": payload,
-                "status": "pending", "priority": priority, "created_at": created_at}
+                "status": "pending", "created_at": created_at}
 
     async def claim_next(self) -> dict | None:
-        """Atomically claim the highest-priority pending task."""
+        """Atomically claim the oldest pending task (FIFO)."""
         async with self._db.conn.execute(
             """SELECT * FROM tasks WHERE status = 'pending'
-               ORDER BY priority DESC, created_at ASC LIMIT 1"""
+               ORDER BY created_at ASC LIMIT 1"""
         ) as cur:
             row = await cur.fetchone()
         if not row:

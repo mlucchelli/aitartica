@@ -75,7 +75,7 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, db
         tasks = TasksRepository(db)
 
         loc = await locations.insert(latitude, longitude, recorded_at)
-        await tasks.insert("process_location", {"location_id": loc["id"]}, priority=2)
+        await tasks.insert("process_location", {"location_id": loc["id"]})
 
         logger.info("Location received: lat=%s lon=%s id=%s", latitude, longitude, loc["id"])
 

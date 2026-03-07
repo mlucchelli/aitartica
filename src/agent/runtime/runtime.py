@@ -1,118 +1,42 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 from agent.config.loader import Config
+from agent.db.database import Database
+from agent.db.locations_repo import LocationsRepository
+from agent.db.messages_repo import MessagesRepository
+from agent.db.photos_repo import PhotosRepository
+from agent.db.tasks_repo import TasksRepository, VALID_TASK_TYPES
+from agent.db.weather_repo import WeatherRepository
 from agent.llm.client import LLMClient
 from agent.llm.prompt_builder import PromptBuilder
-from agent.models.state import StepInfo
+from agent.models.actions import SendMessageAction, ToolAction
 from agent.runtime.parser import ActionParser
 from agent.runtime.protocols import OutputHandler
 from agent.state.store import StateStore
 
 logger = logging.getLogger(__name__)
 
-_SEND_MESSAGE = {
-    "type": "object",
-    "properties": {
-        "type": {"type": "string", "enum": ["send_message"]},
-        "payload": {
-            "type": "object",
-            "properties": {"content": {"type": "string"}},
-            "required": ["content"],
-            "additionalProperties": False,
-        },
-    },
-    "required": ["type", "payload"],
-    "additionalProperties": False,
-}
-
-_COLLECT_FIELD = {
-    "type": "object",
-    "properties": {
-        "type": {"type": "string", "enum": ["collect_field"]},
-        "payload": {
-            "type": "object",
-            "properties": {
-                "field": {"type": "string"},
-                "value": {"type": "string"},
-                "confidence": {"type": "number"},
-            },
-            "required": ["field", "value", "confidence"],
-            "additionalProperties": False,
-        },
-    },
-    "required": ["type", "payload"],
-    "additionalProperties": False,
-}
-
-_UPDATE_STATE = {
-    "type": "object",
-    "properties": {
-        "type": {"type": "string", "enum": ["update_state"]},
-        "payload": {
-            "type": "object",
-            "properties": {
-                "steps": {
-                    "anyOf": [
-                        {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "step_key": {"type": "string"},
-                                    "status": {"type": "string"},
-                                },
-                                "required": ["step_key", "status"],
-                                "additionalProperties": False,
-                            },
-                        },
-                        {"type": "null"},
-                    ],
-                },
-                "total_attempts": {
-                    "anyOf": [
-                        {"type": "integer"},
-                        {"type": "null"},
-                    ],
-                },
-            },
-            "required": ["steps", "total_attempts"],
-            "additionalProperties": False,
-        },
-    },
-    "required": ["type", "payload"],
-    "additionalProperties": False,
-}
-
-_ESCALATE = {
-    "type": "object",
-    "properties": {
-        "type": {"type": "string", "enum": ["escalate"]},
-        "payload": {
-            "type": "object",
-            "properties": {"reason": {"type": "string"}},
-            "required": ["reason"],
-            "additionalProperties": False,
-        },
-    },
-    "required": ["type", "payload"],
-    "additionalProperties": False,
-}
-
 RESPONSE_FORMAT: dict[str, Any] = {
     "type": "json_schema",
     "json_schema": {
         "name": "agent_response",
-        "strict": True,
+        "strict": False,
         "schema": {
             "type": "object",
             "properties": {
                 "actions": {
                     "type": "array",
                     "items": {
-                        "anyOf": [_SEND_MESSAGE, _COLLECT_FIELD, _UPDATE_STATE, _ESCALATE],
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string"},
+                            "payload": {"type": "object"},
+                        },
+                        "required": ["type"],
                     },
                 },
             },
@@ -130,30 +54,23 @@ class Runtime:
         state_store: StateStore,
         llm_client: LLMClient,
         output: OutputHandler,
+        db: Database | None = None,
     ) -> None:
         self._config = config
         self._store = state_store
         self._llm = llm_client
         self._prompt_builder = PromptBuilder(config)
-        self._parser = ActionParser(config.collection.confidence_threshold)
+        self._parser = ActionParser()
         self._output = output
+        self._db = db
 
     async def start_session(self, session_id: str | None = None) -> str:
         state = await self._store.create(session_id)
-
-        # Initialize steps from config
-        state.steps = [
-            StepInfo(step_key=s.key, status=s.initial_status)
-            for s in self._config.steps
-        ]
-
-        # Add configured greeting to state and notify output
         greeting = self._config.agent.greeting
         state.add_message("assistant", greeting)
         await self._store.save(state)
         self._output.on_state_update(state.model_dump())
         self._output.display(greeting)
-
         return state.session_id
 
     async def end_session(self, session_id: str) -> None:
@@ -161,54 +78,172 @@ class Runtime:
 
     async def process_message(self, session_id: str, user_message: str) -> None:
         state = await self._store.get(session_id)
-
-        # Build system prompt from config + current state
         system_prompt = self._prompt_builder.build(state)
-
-        # Save user message to state
         state.add_message("user", user_message)
 
-        # Build messages array: system + history + current message
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
         for msg in state.messages:
             messages.append({"role": msg.role, "content": msg.content})
 
-        # Debug: dump system prompt before LLM call
         self._output.on_system_prompt(system_prompt)
 
-        # Call LLM — messages format aligned with OpenRouter API
-        response = await self._llm.ainvoke(messages, RESPONSE_FORMAT)
+        max_depth = self._config.runtime.max_chain_depth
 
-        # Debug: show LLM response and current state before executing
-        self._output.on_llm_response(response)
-        self._output.on_state_update(state.model_dump())
+        for depth in range(max_depth):
+            response = await self._llm.ainvoke(messages, RESPONSE_FORMAT)
+            self._output.on_llm_response(response)
 
-        # Parse raw actions from response
-        raw_actions = self._extract_actions(response)
-        actions = self._parser.parse(raw_actions)
+            raw_actions = self._extract_actions(response)
+            actions = self._parser.parse(raw_actions)
 
-        # Execute all actions, collect display results
-        display_results: list[str] = []
-        for action in actions:
-            self._output.on_action_start(action.type)
-            result = await action.execute(state)
-            self._output.on_state_update(state.model_dump())
-            if result is not None:
-                display_results.append(result)
+            # Separate tool actions from the final send_message
+            tool_actions = [a for a in actions if isinstance(a, ToolAction)]
+            send_action = next((a for a in actions if isinstance(a, SendMessageAction)), None)
 
-        # Display messages after all actions have been logged
-        for result in display_results:
-            self._output.display(result)
+            # Execute tool actions and append results to context
+            for action in tool_actions:
+                self._output.on_action_start(action.type)
+                tool_result = await self._dispatch_tool(action.type, action.payload)
+                messages.append({
+                    "role": "tool",
+                    "content": f"[{action.type} result]: {tool_result}",
+                })
 
-        # Persist updated state
+            # If we have send_message, execute it and stop the chain
+            if send_action:
+                result = await send_action.execute(state)
+                self._output.on_state_update(state.model_dump())
+                if result:
+                    self._output.display(result)
+                await self._store.save(state)
+                return
+
+            # No send_message and no tool actions — something went wrong
+            if not tool_actions:
+                logger.warning("No actionable response at depth %d — stopping", depth)
+                break
+
+        # Max depth reached or no valid actions — force a fallback
+        logger.warning("Chain ended without send_message — sending fallback")
+        fallback = "I've completed the requested operations."
+        state.add_message("assistant", fallback)
         await self._store.save(state)
+        self._output.display(fallback)
 
     def _extract_actions(self, response: dict) -> list[dict]:
         raw = response.get("actions")
-        if raw is None:
-            logger.warning("LLM response missing 'actions' key: %s", response)
-            return []
         if not isinstance(raw, list):
-            logger.warning("LLM 'actions' is not a list: %s", type(raw))
+            logger.warning("LLM response missing or invalid 'actions': %s", response)
             return []
         return raw
+
+    # ── Tool dispatch ─────────────────────────────────────────────────────────
+
+    async def _dispatch_tool(self, action_type: str, payload: dict) -> str:
+        try:
+            match action_type:
+                case "get_latest_locations":
+                    return await self._tool_get_latest_locations(payload)
+                case "get_locations_by_date":
+                    return await self._tool_get_locations_by_date(payload)
+                case "get_photos":
+                    return await self._tool_get_photos(payload)
+                case "get_weather":
+                    return await self._tool_get_weather(payload)
+                case "create_task":
+                    return await self._tool_create_task(payload)
+                case "scan_photo_inbox":
+                    return await self._tool_scan_photo_inbox(payload)
+                case "publish_daily_progress":
+                    return await self._tool_publish_daily_progress(payload)
+                case "publish_route_snapshot":
+                    return await self._tool_publish_route_snapshot(payload)
+                case "upload_image":
+                    return await self._tool_upload_image(payload)
+                case "publish_agent_message":
+                    return await self._tool_publish_agent_message(payload)
+                case "publish_weather_snapshot":
+                    return await self._tool_publish_weather_snapshot(payload)
+                case _:
+                    return f"unknown tool: {action_type}"
+        except Exception as exc:
+            logger.exception("Tool %s failed: %s", action_type, exc)
+            return f"error executing {action_type}: {exc}"
+
+    def _require_db(self) -> Database:
+        if self._db is None:
+            raise RuntimeError("DB not configured")
+        return self._db
+
+    async def _tool_get_latest_locations(self, payload: dict) -> str:
+        repo = LocationsRepository(self._require_db())
+        limit = int(payload.get("limit", 10))
+        rows = await repo.get_latest(limit)
+        if not rows:
+            return "no locations recorded yet"
+        return json.dumps(rows, default=str)
+
+    async def _tool_get_locations_by_date(self, payload: dict) -> str:
+        date = payload.get("date")
+        if not date:
+            return "error: date is required (YYYY-MM-DD)"
+        repo = LocationsRepository(self._require_db())
+        rows = await repo.get_by_date(date)
+        if not rows:
+            return f"no locations recorded on {date}"
+        return json.dumps(rows, default=str)
+
+    async def _tool_get_photos(self, payload: dict) -> str:
+        repo = PhotosRepository(self._require_db())
+        rows = await repo.get_all(
+            vision_status=payload.get("vision_status"),
+            is_remote_candidate=payload.get("is_remote_candidate"),
+            date=payload.get("date"),
+        )
+        if not rows:
+            return "no photos found"
+        return json.dumps(rows, default=str)
+
+    async def _tool_get_weather(self, payload: dict) -> str:
+        repo = WeatherRepository(self._require_db())
+        latest = await repo.get_latest()
+        if latest:
+            return json.dumps(latest, default=str)
+        return "no weather data available — fetch_weather task not yet run"
+
+    async def _tool_create_task(self, payload: dict) -> str:
+        task_type = payload.get("type")
+        if not task_type:
+            return "error: task type is required"
+        if task_type not in VALID_TASK_TYPES:
+            return f"error: unknown task type '{task_type}'. Valid: {sorted(VALID_TASK_TYPES)}"
+        repo = TasksRepository(self._require_db())
+        task_payload = payload.get("payload", {})
+        task = await repo.insert(task_type, task_payload)
+        return f"task created: id={task['id']} type={task_type}"
+
+    async def _tool_scan_photo_inbox(self, payload: dict) -> str:
+        # Full implementation in PhotoService (commit 15)
+        return "photo inbox scan not yet implemented — available in a later commit"
+
+    async def _tool_publish_daily_progress(self, payload: dict) -> str:
+        # Full implementation in RemoteSyncService (commit 18)
+        return "publish_daily_progress not yet implemented"
+
+    async def _tool_publish_route_snapshot(self, payload: dict) -> str:
+        return "publish_route_snapshot not yet implemented"
+
+    async def _tool_upload_image(self, payload: dict) -> str:
+        return "upload_image not yet implemented"
+
+    async def _tool_publish_agent_message(self, payload: dict) -> str:
+        content = payload.get("content")
+        if not content:
+            return "error: content is required"
+        repo = MessagesRepository(self._require_db())
+        # Store message locally; remote publish in RemoteSyncService (commit 18)
+        msg = await repo.insert("system", "assistant", content)
+        return f"message saved locally (id={msg['id']}) — remote publish not yet implemented"
+
+    async def _tool_publish_weather_snapshot(self, payload: dict) -> str:
+        return "publish_weather_snapshot not yet implemented"
