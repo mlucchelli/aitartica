@@ -61,7 +61,40 @@ print('PhotoRecord OK:', photo.file_name)
 
 ---
 
-## Commit 9 — HTTP server
+## Commit 9 — Expedition config + loader env vars
+
+```bash
+# Verify config loads and all env vars are read
+source .venv/bin/activate
+python3 -c "
+from dotenv import load_dotenv
+load_dotenv()
+from agent.config.loader import Config
+c = Config.load('configs/expedition_config.json')
+print('model:', c.agent.model)           # qwen3.5:9b
+print('vision_model:', c.agent.vision_model)  # qwen2.5-vl
+print('inbox_dir:', c.photo_pipeline.inbox_dir)
+print('db_path:', c.db.path)
+print('ollama_url:', c.photo_pipeline.ollama_url)
+print('http_port:', c.http_server.port)
+"
+
+# Verify that missing env var causes a loud failure (not silent None)
+python3 -c "
+import os
+os.environ.pop('DB_PATH', None)
+from agent.config.loader import DbConfig
+try:
+    d = DbConfig()
+    print('ERROR: should have raised')
+except KeyError as e:
+    print('Good — KeyError raised:', e)
+"
+```
+
+---
+
+## Commit 10 — HTTP server
 
 ```bash
 # Terminal 1 — start agent
@@ -82,7 +115,7 @@ sqlite3 data/expedition.db "SELECT type, status FROM tasks WHERE type='process_l
 
 ---
 
-## Commit 10 — ExecutionSemaphore + Scheduler
+## Commit 11 — ExecutionSemaphore + Scheduler
 
 ```bash
 # Start agent and observe the status bar
@@ -105,7 +138,7 @@ sqlite3 data/expedition.db "SELECT type, status, executed_at FROM tasks ORDER BY
 
 ---
 
-## Commit 11 — Recursive runtime chaining
+## Commit 12 — Recursive runtime chaining
 
 ```bash
 python -m agent --config configs/expedition_config.json --debug
@@ -129,7 +162,7 @@ python -m agent --config configs/expedition_config.json --debug
 
 ---
 
-## Commit 12 — TaskRunner + CLI task progress
+## Commit 13 — TaskRunner + CLI task progress
 
 ```bash
 python -m agent --config configs/expedition_config.json
@@ -152,7 +185,7 @@ sqlite3 data/expedition.db "SELECT type, status FROM tasks ORDER BY id DESC LIMI
 
 ---
 
-## Commit 13 — ImagePreprocessingService + OllamaClient
+## Commit 14 — ImagePreprocessingService + OllamaClient
 
 ```bash
 # First: make sure Ollama is running with qwen2.5-vl pulled
@@ -194,7 +227,7 @@ asyncio.run(main())
 
 ---
 
-## Commit 14 — PhotoService full pipeline
+## Commit 15 — PhotoService full pipeline
 
 ```bash
 # Requires Ollama running with qwen2.5-vl
@@ -225,7 +258,7 @@ ls data/photos/vision_preview/ # preview JPEG should be here
 
 ---
 
-## Commit 15 — WeatherService
+## Commit 16 — WeatherService
 
 ```bash
 python -m agent --config configs/expedition_config.json
@@ -242,7 +275,7 @@ sqlite3 data/expedition.db \
 
 ---
 
-## Commit 16 — All 12 actions + expedition_config.json
+## Commit 17 — All 12 actions + expedition_config.json
 
 ```bash
 python -m agent --config configs/expedition_config.json
@@ -286,7 +319,7 @@ sqlite3 data/expedition.db "SELECT type, status FROM tasks ORDER BY id DESC LIMI
 
 ---
 
-## Commit 17 — RemoteSyncService
+## Commit 18 — RemoteSyncService
 
 ```bash
 # Option A — use a local mock server to simulate Railway

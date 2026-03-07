@@ -347,7 +347,11 @@ Tasks persist in the `tasks` SQLite table (type, payload JSON, status, priority,
 `asyncio.start_server` with a minimal HTTP parser handles `POST /locations`. Single endpoint, no routing needed. Runs as a concurrent asyncio task. No `aiohttp` / `fastapi` dependency added.
 
 ### Photo pipeline: preview-first, never touch original
-`ImagePreprocessingService` (Pillow) generates a derived JPEG with EXIF orientation corrected and longest side 1280–1600px. Ollama `qwen2.5-vl` receives the preview as base64 and returns a description. A second Ollama call (text model) scores significance (`{"significance_score": float}`). Threshold `0.75` gates `is_remote_candidate`.
+`ImagePreprocessingService` (Pillow) generates a derived JPEG with EXIF orientation corrected and longest side 1280–1600px.
+
+**Vision analysis**: `OllamaClient` sends the preview as base64 to `qwen2.5-vl`. The user message is taken verbatim from `photo_pipeline.vision_prompt` in the config — e.g. *"Describe what you see in detail: the landscape, people, equipment, weather conditions..."*. The model returns a plain-text description. No parsing or structured output needed here.
+
+**Significance scoring**: a second Ollama call (text model `qwen2.5`) receives the description and returns structured JSON `{"significance_score": float}`. Threshold `0.75` gates `is_remote_candidate`. Originals are never modified.
 
 ### Remote publishing is policy-controlled
 Upload constraints: max 3 images/batch, max 10/day. `RemoteSyncService` tracks daily count in the DB. `publish_daily_progress` bundles locations + weather + messages. `publish_route_snapshot` sends GeoJSON of all coordinates.
@@ -380,16 +384,15 @@ All behavior driven by a single JSON file passed via `--config`:
   "runtime":      { "max_chain_depth": 6 },
   "http_server":  { "host": "0.0.0.0", "port": 8080 },
   "scheduler":    { "tick_interval_seconds": 5 },
-  "db":           { "path": "./data/expedition.db" },
+  "db":           {},
   "photo_pipeline": {
-    "inbox_dir": "./data/photos/inbox",
-    "processed_dir": "./data/photos/processed",
-    "vision_preview_dir": "./data/photos/vision_preview",
-    "ollama_url": "http://localhost:11434",
-    "ollama_model": "qwen2.5-vl",
     "significance_threshold": 0.75,
-    "vision_prompt": "Describe this expedition photo in detail."
+    "vision_prompt": "You are analyzing a photo from an Antarctic expedition. Describe what you see in detail: the landscape, people, equipment, weather conditions, and anything noteworthy. Be specific and objective."
   },
+  // Paths and URLs come from environment variables:
+  // DB_PATH, PHOTO_INBOX_DIR, PHOTO_PROCESSED_DIR, PHOTO_PREVIEW_DIR
+  // OLLAMA_URL, OLLAMA_VISION_MODEL, HTTP_HOST, HTTP_PORT
+  // REMOTE_SYNC_BASE_URL, REMOTE_SYNC_API_KEY
   "image_preprocessing": {
     "correct_exif_orientation": true,
     "vision_max_dimension": 1600,
@@ -434,12 +437,13 @@ python -m agent --config configs/expedition_config.json --session <id>    # resu
 | 6  | FileStateStore + enhanced CLI (status bar, spinner, terminal layout)         | Done     |
 | 7  | DB layer: aiosqlite + 6 table repos (locations, photos, weather, tasks, messages, sessions) | Done     |
 | 8  | Models: LocationRecord, TaskRecord, PhotoRecord                              | Done     |
-| 9  | HTTP server: POST /locations → process_location task                         | Planned  |
-| 10 | ExecutionSemaphore + Scheduler (5s tick, weather schedule)                   | Planned  |
-| 11 | Recursive runtime chaining (max_depth=6, tool result context appending)      | Planned  |
-| 12 | TaskRunner: dispatches all 9 task types + CLI task progress output           | Planned  |
-| 13 | ImagePreprocessingService (Pillow EXIF + resize) + OllamaVisionClient        | Planned  |
-| 14 | PhotoService: full pipeline orchestration + significance scoring             | Planned  |
-| 15 | WeatherService: Open-Meteo fetch + DB persistence                            | Planned  |
-| 16 | All 12 actions wired + RESPONSE_FORMAT schema + expedition_config.json       | Planned  |
-| 17 | RemoteSyncService: Railway API publishing                                    | Planned  |
+| 9  | Delete old configs + create expedition_config.json                           | Done     |
+| 10 | HTTP server: POST /locations → process_location task                         | Planned  |
+| 11 | ExecutionSemaphore + Scheduler (5s tick, weather schedule)                   | Planned  |
+| 12 | Recursive runtime chaining (max_depth=6, tool result context appending)      | Planned  |
+| 13 | TaskRunner: dispatches all 9 task types + CLI task progress output           | Planned  |
+| 14 | ImagePreprocessingService (Pillow EXIF + resize) + OllamaClient              | Planned  |
+| 15 | PhotoService: full pipeline orchestration + significance scoring             | Planned  |
+| 16 | WeatherService: Open-Meteo fetch + DB persistence                            | Planned  |
+| 17 | All 12 actions wired + RESPONSE_FORMAT schema                                | Planned  |
+| 18 | RemoteSyncService: Railway API publishing                                    | Planned  |
