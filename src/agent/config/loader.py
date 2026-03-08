@@ -82,6 +82,16 @@ class WeatherConfig(BaseModel):
     schedule_hours: list[int] = Field(default_factory=lambda: [6, 12, 18, 0])
 
 
+class KnowledgeConfig(BaseModel):
+    embedding_model: str = "nomic-embed-text"
+    chroma_dir: str = Field(default_factory=lambda: os.environ["KNOWLEDGE_CHROMA_DIR"])
+    source_dir: str = Field(default_factory=lambda: os.environ["KNOWLEDGE_SOURCE_DIR"])
+    collection_name: str = "expedition"
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+    n_results: int = 5
+
+
 class RemoteSyncConfig(BaseModel):
     api_key_env: str = "REMOTE_SYNC_API_KEY"
     base_url: str = Field(default_factory=lambda: os.environ["REMOTE_SYNC_BASE_URL"])

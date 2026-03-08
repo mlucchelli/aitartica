@@ -2,3 +2,18 @@
 .venv/
 *.egg-info/
 __pycache__/
+.DS_Store
+
+# SQLite WAL files
+data/expedition.db-shm
+data/expedition.db-wal
+
+# Session state files
+session_states/
+
+# Photo data (large files, local only)
+data/photos/processed/
+data/photos/vision_preview/
+
+# ChromaDB (auto-generated, local only)
+data/knowledge_db/

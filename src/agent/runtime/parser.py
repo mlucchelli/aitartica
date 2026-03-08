@@ -10,11 +10,13 @@ from agent.models.actions import (
     GetLocationsByDateAction,
     GetPhotosAction,
     GetWeatherAction,
+    IndexKnowledgeAction,
     PublishAgentMessageAction,
     PublishDailyProgressAction,
     PublishRouteSnapshotAction,
     PublishWeatherSnapshotAction,
     ScanPhotoInboxAction,
+    SearchKnowledgeAction,
     SendMessageAction,
     UploadImageAction,
 )
@@ -35,6 +37,8 @@ ACTION_REGISTRY: dict[str, type[Action]] = {
     "upload_image": UploadImageAction,
     "publish_agent_message": PublishAgentMessageAction,
     "publish_weather_snapshot": PublishWeatherSnapshotAction,
+    "search_knowledge": SearchKnowledgeAction,
+    "index_knowledge": IndexKnowledgeAction,
 }
 
 

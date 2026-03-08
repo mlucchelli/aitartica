@@ -93,3 +93,11 @@ class PublishAgentMessageAction(ToolAction):
 
 class PublishWeatherSnapshotAction(ToolAction):
     type: str = "publish_weather_snapshot"
+
+
+class SearchKnowledgeAction(ToolAction):
+    type: str = "search_knowledge"
+
+
+class IndexKnowledgeAction(ToolAction):
+    type: str = "index_knowledge"

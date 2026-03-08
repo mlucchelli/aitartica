@@ -360,6 +360,7 @@ src/agent/
 ├── services/
 │   ├── photo_service.py     — ImagePreprocessingService + full photo pipeline orchestration
 │   ├── weather_service.py   — Open-Meteo API client (httpx)
+│   ├── knowledge_service.py — ChromaDB + Ollama nomic-embed-text: index + search
 │   └── remote_sync_service.py — Railway API publishing
 └── state/
     ├── store.py             — StateStore Protocol + MemoryStateStore (unchanged)
@@ -373,6 +374,8 @@ data/
 │   ├── inbox/               — Drop new photos here
 │   ├── processed/           — Originals moved here after success
 │   └── vision_preview/      — Derived preview JPEGs
+├── knowledge/               — Drop .txt/.md expedition documents here
+├── knowledge_db/            — ChromaDB persistent storage (auto-created)
 └── expedition.db            — Single SQLite database
 
 
@@ -419,6 +422,26 @@ graph TD
 **Vision analysis**: `OllamaVisionClient` sends the preview as base64 to `qwen2.5vl:7b` via `/api/generate`. Returns plain-text description — no structured output needed.
 
 **Significance scoring**: a second Ollama call (`qwen3.5:9b`) receives the description and returns `{"significance_score": float}`. Threshold `0.75` gates `is_remote_candidate`.
+
+### Knowledge base — ChromaDB + Ollama embeddings
+
+```mermaid
+graph TD
+    Docs[data/knowledge/*.txt *.md\nitinerary, species, ship, locations, science]
+    Docs --> Chunk[KnowledgeService.index_documents\nsliding window ~500 chars / 50 overlap]
+    Chunk --> Embed[Ollama POST /api/embed\nnomic-embed-text]
+    Embed --> Chroma[(ChromaDB\ndata/knowledge_db/)]
+
+    Query[search_knowledge query] --> EmbedQ[Embed query via Ollama]
+    EmbedQ --> Chroma
+    Chroma --> TopK[Top-5 semantic chunks]
+    TopK --> Context[Injected as tool result context]
+    Context --> LLM([LLM re-invoked with knowledge])
+```
+
+Documents are chunked (~500 chars, 50 char overlap), embedded locally via `nomic-embed-text` through Ollama, and stored in a persistent ChromaDB collection. `search_knowledge` embeds the query and returns the top-5 matching chunks. `index_knowledge` re-indexes all source documents (idempotent — upserts by doc ID).
+
+---
 
 ### Remote publishing is policy-controlled
 Upload constraints: max 3 images/batch, max 10/day. `RemoteSyncService` tracks daily count in the DB. `publish_daily_progress` bundles locations + weather + messages. `publish_route_snapshot` sends GeoJSON of all coordinates.
@@ -473,6 +496,14 @@ All behavior driven by a single JSON file passed via `--config`:
     "longitude": -58.45,
     "schedule_hours": [6, 12, 18, 0]
   },
+  "knowledge": {
+    "embedding_model": "nomic-embed-text",
+    "collection_name": "expedition",
+    "chunk_size": 500,
+    "chunk_overlap": 50,
+    "n_results": 5
+    // chroma_dir and source_dir from env: KNOWLEDGE_CHROMA_DIR, KNOWLEDGE_SOURCE_DIR
+  },
   "remote_sync": {
     "base_url": "https://your-railway-app.railway.app",
     "api_key_env": "REMOTE_SYNC_API_KEY",
@@ -513,5 +544,7 @@ python -m agent --config configs/expedition_config.json --session <id>    # resu
 | 15 | WeatherService: Open-Meteo ECMWF full Antarctic fields + DB persistence + get_weather live fetch | Done     |
 | 16 | CLI status bar: location + weather + precipitation + 5min auto-refresh       | Done     |
 | 17 | ImagePreprocessingService (Pillow EXIF + resize + copy opt) + OllamaVisionClient (qwen2.5vl:7b) structured output (description + summary) | Done     |
-| 18 | PhotoService: scan inbox, preprocess, vision, significance scoring, DB, move to processed | Planned  |
-| 19 | RemoteSyncService: Railway API publishing                                    | Planned  |
+| 18 | PhotoService: scan inbox, preprocess, vision, Ollama significance scoring, DB, move to processed | Done     |
+| 19 | Embedding pipeline + `search_knowledge` / `index_knowledge` actions (ChromaDB + nomic-embed-text) | **Next** |
+| 20 | RemoteSyncService: Railway API publishing                                    | Planned  |
+| 21 | Tests + documentation                                                        | Planned  |
