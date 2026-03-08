@@ -37,7 +37,7 @@ classDiagram
         +session_id: str
         +started_at: datetime
         +last_activity: datetime
-        +messages: list[Message]
+        +messages: list~Message~
         +add_message(role, content) None
     }
 
@@ -57,33 +57,25 @@ classDiagram
     }
 
     class SendMessageAction {
-        +type: "send_message"
+        +type: send_message
         +execute(state) str
     }
 
     class FinishAction {
-        +type: "finish"
+        +type: finish
         +execute(state) None
     }
 
     class ToolAction {
         <<abstract>>
+        13 concrete subclasses
+        get_latest_locations · get_locations_by_date
+        get_photos · get_weather · create_task
+        scan_photo_inbox · search_knowledge · index_knowledge
+        publish_daily_progress · publish_route_snapshot
+        upload_image · publish_agent_message · publish_weather_snapshot
         +execute(state) None
     }
-
-    class GetLatestLocationsAction { +type: "get_latest_locations" }
-    class GetLocationsByDateAction { +type: "get_locations_by_date" }
-    class GetPhotosAction { +type: "get_photos" }
-    class GetWeatherAction { +type: "get_weather" }
-    class CreateTaskAction { +type: "create_task" }
-    class ScanPhotoInboxAction { +type: "scan_photo_inbox" }
-    class SearchKnowledgeAction { +type: "search_knowledge" }
-    class IndexKnowledgeAction { +type: "index_knowledge" }
-    class PublishDailyProgressAction { +type: "publish_daily_progress" }
-    class PublishRouteSnapshotAction { +type: "publish_route_snapshot" }
-    class UploadImageAction { +type: "upload_image" }
-    class PublishAgentMessageAction { +type: "publish_agent_message" }
-    class PublishWeatherSnapshotAction { +type: "publish_weather_snapshot" }
 
     %% ── Config ────────────────────────────────────────────────────────────────
 
@@ -101,7 +93,7 @@ classDiagram
         +weather: WeatherConfig
         +knowledge: KnowledgeConfig
         +remote_sync: RemoteSyncConfig
-        +load(path)$ Config
+        +load(path: str | Path)$ Config
     }
 
     %% ── Runtime ───────────────────────────────────────────────────────────────
@@ -110,6 +102,8 @@ classDiagram
         -_config: Config
         -_store: StateStore
         -_llm: LLMClient
+        -_prompt_builder: PromptBuilder
+        -_parser: ActionParser
         -_output: OutputHandler
         -_db: Database
         +start_session(session_id?) str
@@ -122,6 +116,8 @@ classDiagram
         -_db: Database
         -_semaphore: ExecutionSemaphore
         -_task_runner: TaskRunner
+        -_last_weather_hour: int | None
+        +set_task_runner(runner) None
         +run() None
         -_tick() None
         -_generate_due_tasks(repo) None
@@ -132,7 +128,7 @@ classDiagram
         -_state: SemaphoreState
         +is_idle: bool
         +acquire_typing() None
-        +acquire_llm() None
+        +transition_to_llm() None
         +acquire_task() None
         +release() None
     }
@@ -142,10 +138,14 @@ classDiagram
         -_db: Database
         -_output: OutputHandler
         +execute(task: dict) None
+        -_process_location(payload) None
+        -_scan_photo_inbox(payload) None
+        -_process_photo(payload) None
+        -_fetch_weather(payload) None
     }
 
     class ActionParser {
-        +parse(raw_actions: list[dict]) list[Action]
+        +parse(raw_actions: list~dict~) list~Action~
     }
 
     %% ── LLM Clients ───────────────────────────────────────────────────────────
@@ -153,6 +153,8 @@ classDiagram
     class OllamaClient {
         -_model: str
         -_base_url: str
+        -_temperature: float
+        -_max_tokens: int
         +ainvoke(messages, response_format) dict
     }
 
@@ -160,11 +162,13 @@ classDiagram
         -_model: str
         -_base_url: str
         -_prompt: str
-        +describe(image_path) VisionResult
+        +describe(image_path: str | Path) VisionResult
     }
 
     class OpenRouterClient {
         -_model: str
+        -_temperature: float
+        -_max_tokens: int
         -_headers: dict
         +ainvoke(messages, response_format) dict
     }
@@ -174,82 +178,26 @@ classDiagram
         +summary: str
     }
 
-    %% ── Database ──────────────────────────────────────────────────────────────
-
-    class Database {
-        -_path: Path
-        -_conn: aiosqlite.Connection
-        +init_all_tables() None
-        +connect() None
-        +close() None
-    }
-
-    class LocationsRepository {
-        +insert(lat, lon, recorded_at) dict
-        +get_latest(limit) list[dict]
-        +get_by_date(date) list[dict]
-        +get_all() list[dict]
-    }
-
-    class PhotosRepository {
-        +insert(file_path, file_name, folder) dict
-        +get_by_id(id) dict
-        +get_by_path(path) dict
-        +get_all(vision_status?, is_remote_candidate?, date?) list[dict]
-        +update(photo_id, **fields) None
-        +count_uploaded_today() int
-    }
-
-    class WeatherRepository {
-        +insert(...) dict
-        +get_latest() dict
-        +get_today() list[dict]
-    }
-
-    class TasksRepository {
-        +insert(type, payload) dict
-        +claim_next() dict | None
-        +complete(task_id) None
-        +fail(task_id, error) None
-        +count_pending() int
-    }
-
-    class MessagesRepository {
-        +insert(session_id, role, content) dict
-        +get_today(session_id?) list[dict]
-        +mark_published(message_id) None
-    }
-
     %% ── Services ──────────────────────────────────────────────────────────────
 
     class PhotoService {
+        -_config: Config
+        -_db: Database
+        -_output: OutputHandler
+        -_inbox: Path
+        -_processed_dir: Path
         -_preprocessor: ImagePreprocessingService
         -_vision: OllamaVisionClient
         -_threshold: float
         +scan_inbox() int
-        +process_photo(photo_id) None
-        -_score_significance(description) float
+        +process_photo(photo_id: int) None
+        -_score_significance(description: str) float
     }
 
     class ImagePreprocessingService {
         -_cfg: ImagePreprocessingConfig
         -_preview_dir: Path
-        +process(source_path) PreprocessResult
-    }
-
-    class WeatherService {
-        -_config: Config
-        -_db: Database
-        +fetch_and_store(lat?, lon?) dict
-    }
-
-    class KnowledgeService {
-        -_config: KnowledgeConfig
-        -_ollama_url: str
-        +index_documents() int
-        +search(query, n_results?) str
-        -_embed(texts) list[list[float]]
-        -_chunk(text) list[str]
+        +process(source_path: str | Path) PreprocessResult
     }
 
     class PreprocessResult {
@@ -262,14 +210,82 @@ classDiagram
         +sha256: str
     }
 
+    class WeatherService {
+        -_config: Config
+        -_db: Database
+        +fetch_and_store(lat?, lon?) dict
+    }
+
+    class KnowledgeService {
+        -_config: KnowledgeConfig
+        -_ollama_url: str
+        +index_documents() int
+        +search(query: str, n_results?: int) str
+        -_embed(texts: list~str~) list~list~float~~
+        -_chunk(text: str) list~str~
+    }
+
+    %% ── Database ──────────────────────────────────────────────────────────────
+
+    class Database {
+        -_path: Path
+        -_conn: aiosqlite.Connection | None
+        +connect() None
+        +close() None
+        +init_all_tables() None
+        +conn: aiosqlite.Connection
+    }
+
+    class LocationsRepository {
+        -_db: Database
+        +insert(lat, lon, recorded_at) dict
+        +get_latest(limit: int) list~dict~
+        +get_by_date(date: str) list~dict~
+        +get_all() list~dict~
+    }
+
+    class PhotosRepository {
+        -_db: Database
+        +insert(file_path, file_name, folder) dict
+        +get_by_id(photo_id: int) dict | None
+        +get_by_path(file_path: str) dict | None
+        +get_all(vision_status?, is_remote_candidate?, date?) list~dict~
+        +update(photo_id: int, **fields) None
+        +count_uploaded_today() int
+    }
+
+    class WeatherRepository {
+        -_db: Database
+        +insert(lat, lon, temp, ...) dict
+        +get_latest() dict | None
+        +get_today() list~dict~
+    }
+
+    class TasksRepository {
+        -_db: Database
+        +insert(type: str, payload: dict) dict
+        +claim_next() dict | None
+        +complete(task_id: int) None
+        +fail(task_id: int, error: str) None
+        +count_pending() int
+    }
+
+    class MessagesRepository {
+        -_db: Database
+        +insert(session_id, role, content) dict
+        +get_today(session_id?) list~dict~
+        +mark_published(message_id: int) None
+    }
+
     %% ── State Store Implementations ───────────────────────────────────────────
 
     class MemoryStateStore {
-        -_states: dict
+        -_states: dict~str, ConversationState~
     }
 
     class FileStateStore {
         -_dir: Path
+        -_path(session_id) Path
     }
 
     %% ── CLI ───────────────────────────────────────────────────────────────────
@@ -278,16 +294,19 @@ classDiagram
         -_config: Config
         -_console: Console
         -_expedition_status: str
+        -_session_id: str | None
+        -_total_tokens: int
         +run(runtime, semaphore?, db?) None
-        +on_llm_start(depth) None
-        +on_vision_start(filename) None
-        +on_task_progress(message) None
-        +display(content) None
-        -_build_status_text() str
+        +on_llm_start(depth: int) None
+        +on_vision_start(filename: str) None
+        +on_task_progress(message: str) None
+        +display(content: str) None
+        -_build_status_text(db?) str
         -_status_loop(db) None
+        -_get_input_async() str | None
     }
 
-    %% ── Relationships ─────────────────────────────────────────────────────────
+    %% ── Protocol implementations ──────────────────────────────────────────────
 
     LLMClient <|.. OllamaClient : implements
     LLMClient <|.. OpenRouterClient : implements
@@ -295,70 +314,75 @@ classDiagram
     StateStore <|.. FileStateStore : implements
     OutputHandler <|.. CLI : implements
 
+    %% ── Action hierarchy ──────────────────────────────────────────────────────
+
     Action <|-- SendMessageAction
     Action <|-- FinishAction
     Action <|-- ToolAction
-    ToolAction <|-- GetLatestLocationsAction
-    ToolAction <|-- GetLocationsByDateAction
-    ToolAction <|-- GetPhotosAction
-    ToolAction <|-- GetWeatherAction
-    ToolAction <|-- CreateTaskAction
-    ToolAction <|-- ScanPhotoInboxAction
-    ToolAction <|-- SearchKnowledgeAction
-    ToolAction <|-- IndexKnowledgeAction
-    ToolAction <|-- PublishDailyProgressAction
-    ToolAction <|-- PublishRouteSnapshotAction
-    ToolAction <|-- UploadImageAction
-    ToolAction <|-- PublishAgentMessageAction
-    ToolAction <|-- PublishWeatherSnapshotAction
+
+    %% ── State model ───────────────────────────────────────────────────────────
 
     ConversationState *-- Message
+
+    %% ── Runtime holds references (composition) ────────────────────────────────
 
     Runtime o-- Config
     Runtime o-- StateStore
     Runtime o-- LLMClient
+    Runtime o-- ActionParser
     Runtime o-- OutputHandler
     Runtime o-- Database
 
-    Scheduler o-- ExecutionSemaphore
+    %% ── Scheduler holds references (composition) ──────────────────────────────
+
+    Scheduler o-- Config
     Scheduler o-- Database
+    Scheduler o-- ExecutionSemaphore
     Scheduler o-- TaskRunner
 
+    %% ── TaskRunner holds references (composition) ─────────────────────────────
+
+    TaskRunner o-- Config
     TaskRunner o-- Database
     TaskRunner o-- OutputHandler
 
+    %% ── Services use Database as injected dependency (not composed by it) ──────
+
+    PhotoService ..> Database : injects
     PhotoService o-- ImagePreprocessingService
     PhotoService o-- OllamaVisionClient
-    PhotoService o-- Database
-    OllamaVisionClient ..> VisionResult : returns
     ImagePreprocessingService ..> PreprocessResult : returns
+    OllamaVisionClient ..> VisionResult : returns
+    WeatherService ..> Database : injects
 
-    WeatherService o-- Database
-    KnowledgeService o-- Database
+    %% ── Repos receive Database as constructor arg (dependency, not ownership) ──
 
-    Database o-- LocationsRepository
-    Database o-- PhotosRepository
-    Database o-- WeatherRepository
-    Database o-- TasksRepository
-    Database o-- MessagesRepository
+    LocationsRepository ..> Database : injects
+    PhotosRepository ..> Database : injects
+    WeatherRepository ..> Database : injects
+    TasksRepository ..> Database : injects
+    MessagesRepository ..> Database : injects
 
-    CLI o-- Runtime
-    CLI o-- ExecutionSemaphore
+    %% ── TaskRunner delegates to services ──────────────────────────────────────
+
+    TaskRunner ..> PhotoService : creates + delegates
+    TaskRunner ..> WeatherService : creates + delegates
+    TaskRunner ..> KnowledgeService : creates + delegates
 ```
 
 ## Key Design Patterns
 
 ### Command Pattern
-`Action` subclasses encapsulate operations. The Runtime iterates the list without knowing implementations. `ToolAction` subclasses are data containers — execution is delegated to `Runtime._dispatch_tool()`.
+`Action` subclasses encapsulate operations. The Runtime iterates the list without knowing implementations. `ToolAction` subclasses are data containers — execution is delegated to `Runtime._dispatch_tool()`. Only `SendMessageAction` returns displayable text.
 
 ### Repository Pattern
-Six dedicated repository classes, one per SQLite table. Each takes a `Database` in its constructor. Repos never hold connections — they use `db.conn` each time.
+Five dedicated repository classes, one per SQLite table. Each takes `Database` as a constructor parameter — they do not belong to `Database`. `Database` is a connection holder only.
 
 ### Strategy Pattern
 `LLMClient`, `StateStore`, `OutputHandler` are Protocols — any conforming implementation is valid. Ollama vs. OpenRouter, memory vs. file state, CLI vs. test double.
 
 ### Observer Pattern
-`OutputHandler` receives real-time callbacks at each stage: `on_llm_start`, `on_vision_start`, `on_task_progress`, `on_action_start`, `display`. The CLI updates the terminal incrementally — no buffering.
+`OutputHandler` receives real-time callbacks at each stage of execution. The CLI updates the terminal incrementally — no buffering of progress output.
 
 ### Semaphore as State Machine
-`ExecutionSemaphore` wraps a single `asyncio.Lock` with explicit state transitions: `idle → user_typing → llm_running → idle`, `idle → task_running → idle`. The scheduler checks `is_idle` before claiming any work.
+`ExecutionSemaphore` wraps a single `asyncio.Lock` with explicit state: `idle → user_typing → llm_running → idle` and `idle → task_running → idle`. Only one heavy operation can run at a time. HTTP server never touches the lock.
