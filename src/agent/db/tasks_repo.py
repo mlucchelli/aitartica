@@ -22,18 +22,18 @@ class TasksRepository:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def insert(self, type: str, payload: dict) -> dict:
+    async def insert(self, type: str, payload: dict, source: str = "agent") -> dict:
         """Insert a task — FIFO ordering by created_at."""
         created_at = datetime.now(timezone.utc).isoformat()
         async with self._db.conn.execute(
-            """INSERT INTO tasks (type, payload, status, created_at)
-               VALUES (?, ?, 'pending', ?)""",
-            (type, json.dumps(payload), created_at),
+            """INSERT INTO tasks (type, payload, status, source, created_at)
+               VALUES (?, ?, 'pending', ?, ?)""",
+            (type, json.dumps(payload), source, created_at),
         ) as cur:
             row_id = cur.lastrowid
         await self._db.conn.commit()
         return {"id": row_id, "type": type, "payload": payload,
-                "status": "pending", "created_at": created_at}
+                "status": "pending", "source": source, "created_at": created_at}
 
     async def claim_next(self) -> dict | None:
         """Atomically claim the oldest pending task (FIFO)."""
@@ -78,6 +78,19 @@ class TasksRepository:
         ) as cur:
             row = await cur.fetchone()
         return row[0] if row else 0
+
+    async def get_last_executed(self) -> dict | None:
+        """Return the most recently completed or failed task."""
+        async with self._db.conn.execute(
+            """SELECT * FROM tasks WHERE status IN ('completed', 'failed')
+               ORDER BY executed_at DESC LIMIT 1"""
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["payload"] = json.loads(d["payload"])
+        return d
 
     async def get_recent(self, limit: int = 10) -> list[dict]:
         async with self._db.conn.execute(

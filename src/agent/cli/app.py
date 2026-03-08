@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import readline  # noqa: F401 — enables arrow-key navigation in input()
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -51,6 +52,7 @@ class CLI:
         self._config = config
         self._console = Console()
         self._debug = debug
+        self._verbose = os.environ.get("ANTARTIA_VERBOSE", "0") == "1"
         self._last_state: dict | None = None
         self._session_id: str = ""
         self._total_tokens: int = 0
@@ -58,6 +60,9 @@ class CLI:
         self._weather: dict | None = None
         self._last_location: dict | None = None
         self._location_updated_at: str | None = None
+        self._last_task: dict | None = None    # {type, source, success, at}
+        self._running_task: dict | None = None  # {type, source} while executing
+        self._semaphore: "ExecutionSemaphore | None" = None
 
     # -- Banner ------------------------------------------------------------
 
@@ -104,19 +109,56 @@ class CLI:
         self._render_status_bar()
 
     def on_llm_start(self, depth: int) -> None:
+        if not self._verbose:
+            return
         if depth == 0:
             self._console.print("  [dim cyan]▸ reasoning...[/dim cyan]")
         else:
             self._console.print(f"  [dim cyan]▸ reasoning... ({depth})[/dim cyan]")
 
     def on_vision_start(self, filename: str) -> None:
+        if not self._verbose:
+            return
         self._console.print(f"  [dim magenta]◈ analyzing {filename}[/dim magenta]")
 
     def on_action_start(self, action_type: str) -> None:
+        if not self._verbose:
+            return
         self._console.print(f"  [dim]executing: {action_type}[/dim]")
 
+    def _print_to_scroll(self, markup: str) -> None:
+        """Print into the scroll region, preserving the input cursor position."""
+        if self._has_tty:
+            rows = self._rows()
+            self._write("\0337")                    # save cursor
+            self._write(f"\033[{rows - 3};1H")     # move to last row of scroll area
+            self._console.print(markup)             # prints + scrolls region up
+            self._write("\0338")                    # restore cursor to input row
+        else:
+            self._console.print(markup)
+
     def on_task_progress(self, message: str) -> None:
-        self._console.print(f"  [dim cyan]⟳ {escape(message)}[/dim cyan]")
+        if not self._verbose:
+            return
+        self._print_to_scroll(f"  [dim cyan]⟳ {escape(message)}[/dim cyan]")
+
+    def on_task_start(self, task_type: str, source: str) -> None:
+        self._running_task = {"type": task_type, "source": source}
+        self._render_status_bar()
+
+    def on_task_complete(self, task_type: str, source: str, success: bool) -> None:
+        self._running_task = None
+        self._last_task = {
+            "type": task_type,
+            "source": source,
+            "success": success,
+            "at": datetime.now().strftime("%H:%M"),
+        }
+        # Render after release() changes the semaphore state
+        try:
+            asyncio.get_running_loop().call_soon(self._render_status_bar)
+        except RuntimeError:
+            self._render_status_bar()
 
     def update_location(self, latitude: float, longitude: float) -> None:
         self._last_location = {"latitude": latitude, "longitude": longitude}
@@ -146,10 +188,22 @@ class CLI:
 
     async def refresh_expedition_status(self, db: "Database") -> None:
         from agent.db.locations_repo import LocationsRepository
+        from agent.db.tasks_repo import TasksRepository
         from agent.db.weather_repo import WeatherRepository
+
         locs = await LocationsRepository(db).get_latest(limit=1)
         self._last_location = locs[0] if locs else None
         self._weather = await WeatherRepository(db).get_latest()
+
+        last = await TasksRepository(db).get_last_executed()
+        if last:
+            self._last_task = {
+                "type": last["type"],
+                "source": last.get("source", "agent"),
+                "success": last["status"] == "completed",
+                "at": (last.get("executed_at") or "")[:16].replace("T", " ")[11:16],
+            }
+
         self._render_status_bar()
 
     def _build_status_text(self) -> Text:
@@ -175,6 +229,28 @@ class CLI:
             else:
                 precip = ""
             parts.append(f"[white]{temp}{precip}[/white]")
+
+        if self._semaphore:
+            state = self._semaphore.state.value
+            state_colors = {
+                "idle": "dim",
+                "user_typing": "dim",
+                "llm_running": "cyan",
+                "task_running": "yellow",
+            }
+            color = state_colors.get(state, "dim")
+            parts.append(f"[{color}]{state}[/{color}]")
+
+        if self._running_task:
+            t = self._running_task
+            parts.append(f"[yellow]⟳ {t['type']} [{t['source']}][/yellow]")
+        elif self._last_task:
+            t = self._last_task
+            icon = "✓" if t["success"] else "✗"
+            color = "green" if t["success"] else "red"
+            parts.append(
+                f"[{color}]{icon}[/{color}] [dim]{t['type']} [{t['source']}] {t['at']}[/dim]"
+            )
 
         parts.append(f"tokens: {self._total_tokens:,}")
         return Text.from_markup(sep.join(parts))
@@ -285,6 +361,7 @@ class CLI:
         db: "Database | None" = None,
         status_refresh_interval: int = 300,
     ) -> None:
+        self._semaphore = semaphore
         self._setup_terminal()
         self._render_banner()
         self._session_id = await runtime.start_session()
@@ -303,13 +380,14 @@ class CLI:
 
         try:
             while True:
-                # Wait for any running background task to finish, then acquire the lock
+                # Wait for any running task/LLM to finish before showing prompt
                 if semaphore:
                     if not semaphore.is_idle:
-                        async with self._thinking("Background task running..."):
+                        async with self._thinking("Task running..."):
                             await semaphore.acquire_typing()
                     else:
                         await semaphore.acquire_typing()
+                    self._render_status_bar()
 
                 user_input = await self._get_input_async()
 
@@ -325,7 +403,8 @@ class CLI:
 
                 # Transition lock to llm_running — keep holding it
                 if semaphore:
-                    semaphore.transition_to_llm()
+                    await semaphore.transition_to_llm()
+                    self._render_status_bar()
 
                 self._console.print(f"[bold yellow]❯ [/bold yellow]{user_input}")
                 async with self._thinking():

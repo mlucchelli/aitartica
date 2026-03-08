@@ -41,7 +41,7 @@ class Scheduler:
             await self._tick()
 
     async def _tick(self) -> None:
-        if not self._semaphore.is_idle:
+        if not self._semaphore.is_available_for_tasks:
             return
 
         tasks_repo = TasksRepository(self._db)
@@ -73,5 +73,5 @@ class Scheduler:
 
         if current_hour in schedule_hours and current_hour != self._last_weather_hour:
             self._last_weather_hour = current_hour
-            await tasks_repo.insert("fetch_weather", {})
+            await tasks_repo.insert("fetch_weather", {}, source="scheduler")
             logger.info("Scheduler: queued fetch_weather for hour %s", current_hour)

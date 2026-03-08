@@ -116,12 +116,20 @@ class Database:
                 payload       TEXT    NOT NULL DEFAULT '{}',
                 status        TEXT    NOT NULL DEFAULT 'pending',
                 priority      INTEGER NOT NULL DEFAULT 1,
+                source        TEXT    NOT NULL DEFAULT 'agent',
                 created_at    TEXT    NOT NULL,
                 started_at    TEXT,
                 executed_at   TEXT,
                 error_message TEXT
             )
         """)
+        # Migration: add source column to existing DBs that predate this field
+        try:
+            await self._conn.execute(
+                "ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'"
+            )
+        except Exception:
+            pass  # column already exists
 
     async def _create_messages_table(self) -> None:
         await self._conn.execute("""

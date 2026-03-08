@@ -30,16 +30,19 @@ class TaskRunner:
         payload = task["payload"]
         repo = TasksRepository(self._db)
 
-        self._progress(f"starting task {task_type} (id={task_id})")
+        source = task.get("source", "agent")
+        self._progress(f"[{source}] starting task {task_type} (id={task_id})")
+        self._task_start(task_type, source)
 
         try:
             match task_type:
                 case "process_location":
                     await self._process_location(payload)
-                case "scan_photo_inbox":
-                    await self._scan_photo_inbox(payload)
-                case "process_photo":
-                    await self._process_photo(payload)
+                case "scan_photo_inbox" | "process_photo":
+                    logger.info("Task %s skipped — photo tasks run on agent request only", task_type)
+                    await repo.complete(task_id)
+                    self._task_complete(task_type, source, success=True)
+                    return
                 case "fetch_weather":
                     await self._fetch_weather(payload)
                 case "publish_daily_progress":
@@ -56,15 +59,25 @@ class TaskRunner:
                     raise ValueError(f"unknown task type: {task_type}")
 
             await repo.complete(task_id)
-            self._progress(f"task {task_type} (id={task_id}) completed")
+            self._progress(f"[{source}] task {task_type} (id={task_id}) completed")
+            self._task_complete(task_type, source, success=True)
 
         except Exception as exc:
-            logger.exception("Task %s id=%s failed: %s", task_type, task_id, exc)
+            logger.exception("[%s] Task %s id=%s failed: %s", source, task_type, task_id, exc)
             await repo.fail(task_id, str(exc))
-            self._progress(f"task {task_type} (id={task_id}) failed: {exc}")
+            self._progress(f"[{source}] task {task_type} (id={task_id}) failed: {exc}")
+            self._task_complete(task_type, source, success=False)
 
     def _progress(self, message: str) -> None:
         self._output.on_task_progress(message)
+
+    def _task_start(self, task_type: str, source: str) -> None:
+        if hasattr(self._output, "on_task_start"):
+            self._output.on_task_start(task_type, source)
+
+    def _task_complete(self, task_type: str, source: str, success: bool) -> None:
+        if hasattr(self._output, "on_task_complete"):
+            self._output.on_task_complete(task_type, source, success)
 
     # ── Task handlers ─────────────────────────────────────────────────────────
 

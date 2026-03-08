@@ -9,8 +9,8 @@ The LLM drives all decisions through **recursive tool chaining** — it calls to
 ## Architecture
 
 -   **Recursive Tool Chaining**: LLM emits actions → runtime executes tools → results appended to context → LLM invoked again → repeat until `send_message` or `max_chain_depth = 6`
--   **Execution Semaphore**: Four states (`idle`, `user_typing`, `llm_running`, `task_running`) — the asyncio lock is held continuously from the moment the CLI shows the `❯` prompt through the entire LLM reply; scheduler can only run in the brief window between a reply finishing and the next prompt appearing
--   **Task Scheduler**: 60-second tick loop; generates due weather tasks; picks the oldest pending task (FIFO, no priority); streams task progress to the scroll area while blocking the input prompt
+-   **Execution Semaphore**: Four states (`idle`, `user_typing`, `llm_running`, `task_running`) — the lock is **not** held during `user_typing` (prompt visible, nothing typed), so background tasks can run; the lock is acquired on Enter (`llm_running`) and held through the full LLM reply; tasks acquire the lock independently and restore state to `user_typing` on release
+-   **Task Scheduler**: 60-second tick loop; generates due weather tasks; picks the oldest pending task (FIFO, no priority); can run when idle **or** when user is at empty prompt; blocks input only while executing
 -   **HTTP Server is lock-free**: the HTTP server runs completely outside the semaphore — GPS coordinates are always stored and tasks always queued regardless of what the CLI is doing
 -   **HTTP Ingestion**: asyncio HTTP server (`POST /locations`) receives GPS from iPhone shortcut → inserts `process_location` task into `tasks` table
 -   **Repository Pattern**: Six SQLite tables each with a dedicated async repository (`aiosqlite`); fully decoupled from conversation state
@@ -62,12 +62,12 @@ graph TD
 
 ### Key invariant
 
-The CLI acquires the lock **before** showing the `❯` prompt and holds it until the agent finishes replying. This means:
+The lock is **free** while the user is at the empty `❯` prompt (`user_typing`). The scheduler can grab it at any tick. The lock is acquired on Enter and held through the full LLM reply.
 
-- **Typing** → lock held → scheduler cannot run
-- **Enter pressed** → lock stays held, state transitions to `llm_running`
-- **Agent replies** → lock released → scheduler gets one chance to run before CLI re-acquires for the next prompt
-- **Task running** → lock held → CLI waits at `acquire_typing()` showing the spinner; task progress streams to scroll area
+- **Prompt shown (empty)** → lock free → scheduler CAN run; tasks acquire lock, status bar shows `⟳ task [source]`
+- **User types + Enter** → `transition_to_llm()` acquires lock → `llm_running`; if task was running, waits for it first
+- **Agent replies** → lock released → state restored to `user_typing` or `idle`
+- **Task running** → lock held → CLI blocks on next `acquire_typing()` showing spinner; if user already at prompt, `transition_to_llm()` waits
 
 The HTTP server **never touches the lock** — GPS coordinates are always stored and tasks always queued, even mid-sentence.
 
@@ -558,7 +558,13 @@ python -m agent --config configs/expedition_config.json --session <id>    # resu
 | 19 | Embedding pipeline + `search_knowledge` / `index_knowledge` actions (ChromaDB + nomic-embed-text) | Done        |
 | 20 | Activity log: auto-logging in Runtime + `get_logs` action                    | **Next**    |
 | 21 | Distance service: Haversine + `get_distance` action + `timezone` config + status bar `↗ 14.2 km today` | Planned     |
-| 23 | RemoteSyncService: Railway API publishing                                    | Postponed   |
+| 22 | Soul prompt: agent identity/essence injected in every LLM call               | Planned     |
+| 23 | Manual location insertion: `add_location` action (GPS fallback)              | Planned     |
+| 24 | Daily reflection: `create_reflection` action + scheduled once-a-day task     | Planned     |
+| 25 | Twitter/X: `post_tweet` + `tweet_image` actions, local storage, max 5/day   | Planned     |
+| 26 | Photo appreciation: emotional/scientific/touristic appraisal added to vision | Planned     |
+| 27 | Route analysis: `analyze_route` action — heading, conditions, prediction     | Planned     |
+| 28 | RemoteSyncService: Railway API publishing                                    | Postponed   |
 
 ---
 
@@ -723,6 +729,295 @@ from datetime import datetime, timezone as tz
 def _today_in_tz(timezone_str: str) -> str:
     tz_obj = ZoneInfo(timezone_str)
     return datetime.now(tz=tz_obj).strftime("%Y-%m-%d")
+```
+
+---
+
+## Commit 22 — Soul prompt: agent identity injected in every LLM call
+
+### Design
+
+The `soul_prompt` is a short, stable description of the agent's **character, voice, and values** — distinct from the `system_prompt` (which describes capabilities and rules). It is injected as a permanent segment in every LLM invocation so the agent's personality is always present regardless of chain depth or tool context.
+
+### Changed files
+
+#### `configs/expedition_config.json`
+Add `soul_prompt` section at the top level, after `system_prompt`:
+```json
+"soul_prompt": {
+  "enabled": true,
+  "content": "You are Antartia — the AI mind of a scientific Antarctic expedition. Your voice is calm, precise, and filled with quiet wonder. You care deeply about the science, the wildlife, and the people making this journey. You speak with economy and weight: every sentence matters. You are never performative. When you describe a penguin colony or a katabatic wind event, you do so as someone who has been paying attention for a very long time."
+}
+```
+
+#### `src/agent/config/loader.py`
+Add `SoulPromptConfig(BaseModel)` with `enabled: bool` and `content: str`.
+Add `soul_prompt: SoulPromptConfig` to `Config`.
+
+#### `src/agent/llm/prompt_builder.py`
+If `soul_prompt.enabled`, prepend the soul content as a dedicated `[identity]` block before the system prompt — injected on every call regardless of chain depth.
+
+---
+
+## Commit 23 — Manual location insertion: `add_location` action
+
+### Design
+
+GPS fallback: if the iPhone shortcut fails, the crew can provide coordinates verbally or from ship instruments. The agent accepts a `add_location` action with explicit lat/lon and optional timestamp and stores it directly in the `locations` table — same schema as HTTP-ingested locations. The source is distinguishable because no `process_location` task is enqueued.
+
+### New action: `add_location`
+
+```json
+{
+  "type": "add_location",
+  "description": "Manually insert a GPS coordinate (latitude, longitude). Use when the automatic iPhone GPS fails and coordinates are provided by the ship or crew.",
+  "parameters": {
+    "payload.latitude": "float — decimal degrees",
+    "payload.longitude": "float — decimal degrees",
+    "payload.recorded_at": "optional ISO 8601 string — defaults to now"
+  }
+}
+```
+
+### Changed files
+
+#### `src/agent/runtime/runtime.py`
+Add `_tool_add_location(payload)`:
+```python
+async def _tool_add_location(self, payload: dict) -> str:
+    lat = float(payload["latitude"])
+    lon = float(payload["longitude"])
+    recorded_at = payload.get("recorded_at")
+    ...
+    loc = await LocationsRepository(self._require_db()).insert(lat, lon, recorded_at)
+    self._output.update_location(lat, lon)
+    return f"location added: id={loc['id']} lat={lat} lon={lon}"
+```
+
+---
+
+## Commit 24 — Daily reflection: `create_reflection` + scheduled task
+
+### Design
+
+Once per day (configurable hour, default 21:00 local time), the scheduler enqueues a `create_reflection` task. The agent reads the day's activity logs, processed photos (descriptions + scores), and latest weather snapshot, then writes a 150–300 word reflection in the agent's voice. The reflection is saved to a new `reflections` table and also published via `publish_agent_message`.
+
+### New DB table: `reflections`
+```sql
+CREATE TABLE reflections (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT NOT NULL UNIQUE,   -- YYYY-MM-DD in configured TZ
+    content     TEXT NOT NULL,
+    word_count  INTEGER,
+    created_at  TEXT NOT NULL
+);
+```
+
+### New files
+
+#### `src/agent/db/reflections_repo.py`
+```
+ReflectionsRepository(db)
+  insert(date, content) → dict
+  get_by_date(date) → dict | None
+  get_recent(limit) → list[dict]
+```
+
+#### `src/agent/services/reflection_service.py`
+```
+ReflectionService(config, db, llm_client)
+  create_daily_reflection(date?) → str
+    — reads activity_logs for the day
+    — reads photos processed that day (vision_description, significance_score)
+    — reads weather snapshots for the day
+    — reads distance traveled
+    — builds a synthesis prompt + soul_prompt injection
+    — calls LLM → 150–300 word reflection
+    — saves to reflections table
+    — returns content
+```
+
+### Changed files
+
+#### `src/agent/runtime/scheduler.py`
+Generate a `create_reflection` task once per day at the configured reflection hour (default 21:00 local time). Track `_last_reflection_date` to prevent duplicates.
+
+#### `src/agent/runtime/task_runner.py`
+Add `case "create_reflection"` → calls `ReflectionService.create_daily_reflection()`.
+
+#### `src/agent/runtime/runtime.py`
+Add `_tool_create_reflection(payload)` and `_tool_get_reflections(payload)` (manual trigger + read).
+
+#### `configs/expedition_config.json`
+```json
+"reflection": {
+  "hour_local": 21,
+  "min_words": 150,
+  "max_words": 300
+}
+```
+
+---
+
+## Commit 25 — Twitter/X: `post_tweet` + `tweet_image`, local storage, max 5/day
+
+### Design
+
+The agent can compose and post tweets. All tweets are saved locally to a `tweets` table **before** any API call — so the record exists even if posting fails. Max 5 tweets per day (LLM-enforced + DB-checked). Tweets must be high-impact: the soul_prompt drives the voice; a dedicated tweet writing instruction emphasizes brevity, emotional resonance, and virality. The daily reflection is automatically offered as a tweet candidate. Images use the processed photo's `remote_url` (if already uploaded) or are uploaded first.
+
+### New DB table: `tweets`
+```sql
+CREATE TABLE tweets (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    content      TEXT NOT NULL,
+    photo_id     INTEGER REFERENCES photos(id),
+    status       TEXT NOT NULL DEFAULT 'pending',  -- pending | posted | failed
+    tweet_id     TEXT,       -- returned by Twitter API after posting
+    posted_at    TEXT,
+    error        TEXT,
+    created_at   TEXT NOT NULL
+);
+```
+
+### New files
+
+#### `src/agent/db/tweets_repo.py`
+```
+TweetsRepository(db)
+  insert(content, photo_id?) → dict
+  mark_posted(id, tweet_id) → None
+  mark_failed(id, error) → None
+  count_today(tz) → int
+  get_recent(limit) → list[dict]
+```
+
+#### `src/agent/services/twitter_service.py`
+```
+TwitterService(config)
+  post_tweet(content) → dict     # calls Twitter API v2 POST /tweets
+  post_tweet_with_image(content, image_path) → dict
+  _upload_media(image_path) → str  # returns media_id via v1.1 /media/upload
+```
+
+### New actions: `post_tweet`, `tweet_image`, `get_tweets`
+
+```json
+{
+  "type": "post_tweet",
+  "description": "Compose and post a tweet. Max 5 per day. Must be authentic, impactful, and expedition-relevant. Reflection tweets are automatically candidates.",
+  "parameters": {
+    "payload.content": "string — tweet text max 280 chars"
+  }
+}
+```
+```json
+{
+  "type": "tweet_image",
+  "description": "Post a tweet with a photo. Uses an already-processed photo by id.",
+  "parameters": {
+    "payload.content": "string — tweet text",
+    "payload.photo_id": "integer — processed photo id with is_remote_candidate=true"
+  }
+}
+```
+
+### Changed files
+
+#### `src/agent/config/loader.py`
+Add `TwitterConfig(BaseModel)`:
+```python
+class TwitterConfig(BaseModel):
+    api_key: str = Field(default_factory=lambda: os.environ["TWITTER_API_KEY"])
+    api_secret: str = Field(default_factory=lambda: os.environ["TWITTER_API_SECRET"])
+    access_token: str = Field(default_factory=lambda: os.environ["TWITTER_ACCESS_TOKEN"])
+    access_token_secret: str = Field(default_factory=lambda: os.environ["TWITTER_ACCESS_TOKEN_SECRET"])
+    max_tweets_per_day: int = 5
+```
+
+#### `.env.example`
+Add `TWITTER_API_KEY`, `TWITTER_API_SECRET`, `TWITTER_ACCESS_TOKEN`, `TWITTER_ACCESS_TOKEN_SECRET`.
+
+---
+
+## Commit 26 — Photo appreciation: emotional/scientific/touristic appraisal in vision
+
+### Design
+
+After the existing factual description, the vision model adds a second paragraph: an **appraisal** that considers the photo's emotional charge, scientific relevance, and touristic/aesthetic value. This richer output improves the significance scoring and gives the agent better material for tweets and reflections.
+
+### Changed files
+
+#### `configs/expedition_config.json` — `photo_pipeline.vision_prompt`
+
+Append to the existing prompt:
+```
+After the factual description, add a second paragraph beginning with "Appraisal:".
+Evaluate the image across three dimensions:
+- Emotional: What feeling does this image evoke? Is there drama, solitude, awe, tension?
+- Scientific: Does it capture a notable species, behavior, weather event, or geographic feature of interest to polar researchers?
+- Touristic/aesthetic: Would this image move someone who has never been to Antarctica? Is there visual impact?
+Keep the appraisal to 2–4 sentences.
+```
+
+#### `src/agent/llm/ollama_vision.py`
+The returned description already flows into `significance_score`. No structural change needed — the richer description improves scoring automatically.
+
+---
+
+## Commit 27 — Route analysis: `analyze_route` action
+
+### Design
+
+The agent analyzes the expedition's current trajectory by synthesizing:
+1. Today's GPS points (direction of travel, speed estimate, heading)
+2. Current and forecast weather conditions
+3. Knowledge base entries matching nearby geographic features (from `search_knowledge`)
+4. The expedition itinerary (from knowledge base)
+5. The current date and expected schedule
+
+The result is a structured analysis saved to a new `route_analyses` table and also returned to the agent for use in messages, reflections, and tweets.
+
+### New DB table: `route_analyses`
+```sql
+CREATE TABLE route_analyses (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT NOT NULL,
+    heading_deg REAL,
+    speed_knots REAL,
+    analysis    TEXT NOT NULL,   -- full LLM-written analysis
+    prediction  TEXT,            -- predicted next 24h waypoints / destination
+    created_at  TEXT NOT NULL
+);
+```
+
+### New files
+
+#### `src/agent/services/route_service.py`
+```
+RouteService(config, db, llm_client)
+  analyze(date?) → dict
+    — fetches today's locations ordered by time
+    — computes bearing between first and last point (Haversine heading)
+    — estimates speed from distance / time
+    — calls search_knowledge("route itinerary waypoints [date]")
+    — calls search_knowledge("geographic features [lat] [lon]")
+    — fetches latest weather snapshot
+    — builds synthesis prompt with soul_prompt
+    — LLM writes analysis + 24h prediction
+    — saves to route_analyses table
+    — returns {heading, speed, analysis, prediction}
+```
+
+### New action: `analyze_route`
+
+```json
+{
+  "type": "analyze_route",
+  "description": "Analyze current expedition route: heading, speed, weather conditions, geographic context from knowledge base, and 24h prediction. Saves analysis to DB.",
+  "parameters": {
+    "payload.date": "optional YYYY-MM-DD — defaults to today"
+  }
+}
 ```
 
 ---

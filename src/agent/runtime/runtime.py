@@ -91,8 +91,17 @@ class Runtime:
 
         for depth in range(max_depth):
             self._output.on_llm_start(depth)
+            logger.info("LLM invoke depth=%d session=%s", depth, session_id)
             response = await self._llm.ainvoke(messages, RESPONSE_FORMAT)
             self._output.on_llm_response(response)
+
+            usage = response.get("_usage", {})
+            logger.info(
+                "LLM response depth=%d tokens=%s actions=%s",
+                depth,
+                usage.get("total_tokens", "?"),
+                [a.get("type") for a in self._extract_actions(response)],
+            )
 
             raw_actions = self._extract_actions(response)
             actions = self._parser.parse(raw_actions)
@@ -102,6 +111,7 @@ class Runtime:
             did_something = False
             for action in actions:
                 self._output.on_action_start(action.type)
+                logger.info("Action: %s session=%s depth=%d", action.type, session_id, depth)
                 if isinstance(action, FinishAction):
                     finish = True
                     did_something = True
@@ -110,9 +120,12 @@ class Runtime:
                     self._output.on_state_update(state.model_dump())
                     if result:
                         self._output.display(result)
+                        logger.info("Message sent: %s…", result[:80].replace("\n", " "))
                     did_something = True
+                    finish = True  # sending a message always ends the chain
                 elif isinstance(action, ToolAction):
                     tool_result = await self._dispatch_tool(action.type, action.payload)
+                    logger.info("Tool %s → %s…", action.type, str(tool_result)[:120].replace("\n", " "))
                     messages.append({
                         "role": "tool",
                         "content": f"[{action.type} result]: {tool_result}",
@@ -120,6 +133,7 @@ class Runtime:
                     did_something = True
 
             if finish:
+                logger.info("Chain finished at depth=%d session=%s", depth, session_id)
                 await self._store.save(state)
                 return
 
@@ -128,7 +142,7 @@ class Runtime:
                 break
 
         # Max depth reached or no valid actions — force a fallback
-        logger.warning("Chain ended without finish — sending fallback")
+        logger.warning("Chain ended without finish — sending fallback session=%s", session_id)
         fallback = "I've completed the requested operations."
         state.add_message("assistant", fallback)
         await self._store.save(state)
