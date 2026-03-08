@@ -107,6 +107,9 @@ class CLI:
         else:
             self._console.print(f"  [dim cyan]▸ reasoning... ({depth})[/dim cyan]")
 
+    def on_vision_start(self, filename: str) -> None:
+        self._console.print(f"  [dim magenta]◈ analyzing {filename}[/dim magenta]")
+
     def on_action_start(self, action_type: str) -> None:
         self._console.print(f"  [dim]executing: {action_type}[/dim]")
 

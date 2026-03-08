@@ -12,7 +12,7 @@ class AgentConfig(BaseModel):
     greeting: str
     model: str
     provider: str = "ollama"  # "ollama" | "openrouter"
-    vision_model: str = "qwen2.5-vl"
+    vision_model: str = "qwen2.5vl:7b"
     temperature: float = 0.7
     max_tokens: int = 500
 
@@ -103,8 +103,8 @@ class PhotoPipelineConfig(BaseModel):
 
 class ImagePreprocessingConfig(BaseModel):
     correct_exif_orientation: bool = True
-    vision_max_dimension: int = 1600
-    vision_min_dimension: int = 1280
+    vision_max_dimension: int = Field(default_factory=lambda: int(os.environ["VISION_MAX_DIM"]))
+    vision_min_dimension: int = Field(default_factory=lambda: int(os.environ["VISION_MIN_DIM"]))
     vision_preview_format: str = "jpeg"
     vision_preview_quality: int = 85
 

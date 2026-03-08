@@ -399,11 +399,26 @@ The asyncio HTTP server runs as a concurrent task and never acquires the semapho
 `asyncio.start_server` with a minimal HTTP parser handles `POST /locations`. Single endpoint, no routing needed. Runs as a concurrent asyncio task. No `aiohttp` / `fastapi` dependency added.
 
 ### Photo pipeline: preview-first, never touch original
-`ImagePreprocessingService` (Pillow) generates a derived JPEG with EXIF orientation corrected and longest side 1280–1600px.
 
-**Vision analysis**: `OllamaClient` sends the preview as base64 to `qwen2.5-vl`. The user message is taken verbatim from `photo_pipeline.vision_prompt` in the config — e.g. *"Describe what you see in detail: the landscape, people, equipment, weather conditions..."*. The model returns a plain-text description. No parsing or structured output needed here.
+```mermaid
+graph TD
+    Inbox[data/photos/inbox/foto.jpg]
+    Inbox --> Preprocess[ImagePreprocessingService\nEXIF correction + resize longest side 1280–1600px\nSHA-256 of original]
+    Preprocess --> Preview[data/photos/vision_preview/foto_preview.jpg]
+    Preview --> Vision[OllamaVisionClient\nqwen2.5vl:7b via /api/generate\nreturns plain-text description]
+    Vision --> Score[Significance scoring\nqwen3.5:9b — structured JSON\n{"significance_score": 0.82}]
+    Score --> DB[(photos table\nvision_description\nsignificance_score\nis_remote_candidate)]
+    DB --> Move[Original moved to\ndata/photos/processed/foto.jpg]
+    DB --> Gate{score >= 0.75?}
+    Gate -->|yes| Candidate[is_remote_candidate = true\neligible for upload]
+    Gate -->|no| Archive[archived only — not published]
+```
 
-**Significance scoring**: a second Ollama call (text model `qwen2.5`) receives the description and returns structured JSON `{"significance_score": float}`. Threshold `0.75` gates `is_remote_candidate`. Originals are never modified.
+`ImagePreprocessingService` (Pillow) generates a derived JPEG with EXIF orientation corrected and longest side 1280–1600px. The original is **never modified** — moved from `inbox/` to `processed/` after successful processing.
+
+**Vision analysis**: `OllamaVisionClient` sends the preview as base64 to `qwen2.5vl:7b` via `/api/generate`. Returns plain-text description — no structured output needed.
+
+**Significance scoring**: a second Ollama call (`qwen3.5:9b`) receives the description and returns `{"significance_score": float}`. Threshold `0.75` gates `is_remote_candidate`.
 
 ### Remote publishing is policy-controlled
 Upload constraints: max 3 images/batch, max 10/day. `RemoteSyncService` tracks daily count in the DB. `publish_daily_progress` bundles locations + weather + messages. `publish_route_snapshot` sends GeoJSON of all coordinates.
@@ -497,6 +512,6 @@ python -m agent --config configs/expedition_config.json --session <id>    # resu
 | 14 | OllamaClient + .env loading + provider config + DB wiring + scheduler/HTTP/semaphore all wired in __main__.py | Done     |
 | 15 | WeatherService: Open-Meteo ECMWF full Antarctic fields + DB persistence + get_weather live fetch | Done     |
 | 16 | CLI status bar: location + weather + precipitation + 5min auto-refresh       | Done     |
-| 17 | ImagePreprocessingService (Pillow EXIF + resize) + OllamaVisionClient        | Planned  |
-| 18 | PhotoService: full pipeline orchestration + significance scoring             | Planned  |
+| 17 | ImagePreprocessingService (Pillow EXIF + resize + copy opt) + OllamaVisionClient (qwen2.5vl:7b) structured output (description + summary) | Done     |
+| 18 | PhotoService: scan inbox, preprocess, vision, significance scoring, DB, move to processed | Planned  |
 | 19 | RemoteSyncService: Railway API publishing                                    | Planned  |
