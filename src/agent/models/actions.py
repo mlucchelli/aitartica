@@ -109,3 +109,7 @@ class AddKnowledgeAction(ToolAction):
 
 class ClearKnowledgeAction(ToolAction):
     type: str = "clear_knowledge"
+
+
+class GetLogsAction(ToolAction):
+    type: str = "get_logs"

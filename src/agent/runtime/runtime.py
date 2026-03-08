@@ -126,6 +126,7 @@ class Runtime:
                 elif isinstance(action, ToolAction):
                     tool_result = await self._dispatch_tool(action.type, action.payload)
                     logger.info("Tool %s → %s…", action.type, str(tool_result)[:120].replace("\n", " "))
+                    await self._log_activity(session_id, action.type, action.payload, tool_result)
                     messages.append({
                         "role": "tool",
                         "content": f"[{action.type} result]: {tool_result}",
@@ -190,11 +191,27 @@ class Runtime:
                     return await self._tool_add_knowledge(payload)
                 case "clear_knowledge":
                     return await self._tool_clear_knowledge(payload)
+                case "get_logs":
+                    return await self._tool_get_logs(payload)
                 case _:
                     return f"unknown tool: {action_type}"
         except Exception as exc:
             logger.exception("Tool %s failed: %s", action_type, exc)
             return f"error executing {action_type}: {exc}"
+
+    async def _log_activity(self, session_id: str, action_type: str, payload: dict, result: str) -> None:
+        if self._db is None:
+            return
+        try:
+            from agent.db.activity_logs_repo import ActivityLogsRepository
+            await ActivityLogsRepository(self._db).insert(
+                session_id=session_id,
+                action_type=action_type,
+                payload=json.dumps(payload),
+                result=str(result),
+            )
+        except Exception as exc:
+            logger.warning("Failed to log activity: %s", exc)
 
     def _require_db(self) -> Database:
         if self._db is None:
@@ -313,6 +330,16 @@ class Runtime:
         svc = KnowledgeService(self._config, self._require_db(), self._output)
         count = await svc.add_document(content, title)
         return f"added {count} chunks to knowledge base (title='{title}')"
+
+    async def _tool_get_logs(self, payload: dict) -> str:
+        from agent.db.activity_logs_repo import ActivityLogsRepository
+        from_dt = payload.get("from")
+        to_dt = payload.get("to")
+        repo = ActivityLogsRepository(self._require_db())
+        rows = await repo.get_by_range(from_dt, to_dt)
+        if not rows:
+            return "no activity logs found for the given range"
+        return json.dumps(rows, default=str)
 
     async def _tool_clear_knowledge(self, payload: dict) -> str:
         from agent.services.knowledge_service import KnowledgeService

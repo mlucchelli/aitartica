@@ -44,6 +44,7 @@ class Database:
         await self._create_messages_table()
         await self._create_sessions_table()
         await self._create_knowledge_docs_table()
+        await self._create_activity_logs_table()
         await self._conn.commit()
 
     async def _create_locations_table(self) -> None:
@@ -150,6 +151,18 @@ class Database:
                 id            TEXT PRIMARY KEY,
                 started_at    TEXT NOT NULL,
                 last_activity TEXT NOT NULL
+            )
+        """)
+
+    async def _create_activity_logs_table(self) -> None:
+        await self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id  TEXT,
+                action_type TEXT NOT NULL,
+                payload     TEXT,
+                result      TEXT,
+                created_at  TEXT NOT NULL
             )
         """)
 
