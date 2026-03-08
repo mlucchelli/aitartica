@@ -11,6 +11,7 @@ class AgentConfig(BaseModel):
     name: str
     greeting: str
     model: str
+    provider: str = "ollama"  # "ollama" | "openrouter"
     vision_model: str = "qwen2.5-vl"
     temperature: float = 0.7
     max_tokens: int = 500

@@ -3,11 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from agent.config.loader import Config
 from agent.db.database import Database
 from agent.db.tasks_repo import TasksRepository
 from agent.runtime.semaphore import ExecutionSemaphore
+
+if TYPE_CHECKING:
+    from agent.runtime.task_runner import TaskRunner
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +30,7 @@ class Scheduler:
         self._task_runner: object | None = None  # set after construction to avoid circular import
         self._last_weather_hour: int | None = None
 
-    def set_task_runner(self, runner: object) -> None:
+    def set_task_runner(self, runner: "TaskRunner") -> None:
         self._task_runner = runner
 
     async def run(self) -> None:

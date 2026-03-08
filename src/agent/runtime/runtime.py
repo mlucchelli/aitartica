@@ -111,6 +111,7 @@ class Runtime:
 
             # If we have send_message, execute it and stop the chain
             if send_action:
+                self._output.on_action_start(send_action.type)
                 result = await send_action.execute(state)
                 self._output.on_state_update(state.model_dump())
                 if result:
@@ -205,11 +206,12 @@ class Runtime:
         return json.dumps(rows, default=str)
 
     async def _tool_get_weather(self, payload: dict) -> str:
-        repo = WeatherRepository(self._require_db())
-        latest = await repo.get_latest()
-        if latest:
-            return json.dumps(latest, default=str)
-        return "no weather data available — fetch_weather task not yet run"
+        from agent.services.weather_service import WeatherService
+        lat = payload.get("latitude")
+        lon = payload.get("longitude")
+        svc = WeatherService(self._config, self._require_db())
+        snapshot = await svc.fetch_and_store(lat, lon)
+        return json.dumps(snapshot, default=str)
 
     async def _tool_create_task(self, payload: dict) -> str:
         task_type = payload.get("type")

@@ -15,25 +15,48 @@ class WeatherRepository:
         latitude: float,
         longitude: float,
         temperature: float | None,
+        apparent_temperature: float | None,
         wind_speed: float | None,
+        wind_gusts: float | None,
         wind_direction: float | None,
+        precipitation: float | None,
+        snowfall: float | None,
+        snow_depth: float | None,
+        surface_pressure: float | None,
         condition: str | None,
         raw: dict,
     ) -> dict:
         recorded_at = datetime.now(timezone.utc).isoformat()
         async with self._db.conn.execute(
             """INSERT INTO weather_snapshots
-               (latitude, longitude, temperature, wind_speed, wind_direction, condition, raw_json, recorded_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (latitude, longitude, temperature, wind_speed, wind_direction,
+               (latitude, longitude, temperature, apparent_temperature,
+                wind_speed, wind_gusts, wind_direction,
+                precipitation, snowfall, snow_depth, surface_pressure,
+                condition, raw_json, recorded_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (latitude, longitude, temperature, apparent_temperature,
+             wind_speed, wind_gusts, wind_direction,
+             precipitation, snowfall, snow_depth, surface_pressure,
              condition, json.dumps(raw), recorded_at),
         ) as cur:
             row_id = cur.lastrowid
         await self._db.conn.commit()
-        return {"id": row_id, "latitude": latitude, "longitude": longitude,
-                "temperature": temperature, "wind_speed": wind_speed,
-                "wind_direction": wind_direction, "condition": condition,
-                "recorded_at": recorded_at}
+        return {
+            "id": row_id,
+            "latitude": latitude,
+            "longitude": longitude,
+            "temperature": temperature,
+            "apparent_temperature": apparent_temperature,
+            "wind_speed": wind_speed,
+            "wind_gusts": wind_gusts,
+            "wind_direction": wind_direction,
+            "precipitation": precipitation,
+            "snowfall": snowfall,
+            "snow_depth": snow_depth,
+            "surface_pressure": surface_pressure,
+            "condition": condition,
+            "recorded_at": recorded_at,
+        }
 
     async def get_latest(self) -> dict | None:
         async with self._db.conn.execute(

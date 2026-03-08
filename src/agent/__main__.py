@@ -3,6 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parents[2] / ".env")
 
 from agent.cli.app import CLI
 from agent.config.loader import Config
@@ -48,18 +53,51 @@ def main() -> None:
 
     if args.test:
         llm = TestLLM()
-    else:
+    elif config.agent.provider == "openrouter":
         from agent.llm.openrouter import OpenRouterClient
 
         llm = OpenRouterClient(config)
+    else:
+        from agent.llm.ollama import OllamaClient
+
+        llm = OllamaClient(config)
 
     cli = CLI(config=config, debug=args.debug)
-    runtime = Runtime(config, store, llm, output=cli)
 
     if args.session:
-        asyncio.run(_resume(cli, runtime, args.session))
+        asyncio.run(_run(config, store, llm, cli, session_id=args.session))
     else:
-        asyncio.run(cli.run(runtime))
+        asyncio.run(_run(config, store, llm, cli))
+
+
+async def _run(config, store, llm, cli, session_id: str | None = None) -> None:
+    from agent.db.database import Database
+    from agent.http.server import start_http_server
+    from agent.runtime.scheduler import Scheduler
+    from agent.runtime.semaphore import ExecutionSemaphore
+    from agent.runtime.task_runner import TaskRunner
+
+    async with Database(config.db.path) as db:
+        semaphore = ExecutionSemaphore()
+        runtime = Runtime(config, store, llm, output=cli, db=db)
+
+        task_runner = TaskRunner(config, db, output=cli)
+        scheduler = Scheduler(config, db, semaphore)
+        scheduler.set_task_runner(task_runner)
+
+        http_server = await start_http_server(config, db)
+
+        scheduler_task = asyncio.create_task(scheduler.run(), name="scheduler")
+
+        try:
+            if session_id:
+                await _resume(cli, runtime, session_id)
+            else:
+                await cli.run(runtime, semaphore=semaphore, db=db)
+        finally:
+            scheduler_task.cancel()
+            http_server.close()
+            await http_server.wait_closed()
 
 
 async def _resume(cli: CLI, runtime: Runtime, session_id: str) -> None:

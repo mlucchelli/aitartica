@@ -23,6 +23,7 @@ _MASCOT_LINES = [
 ]
 
 if TYPE_CHECKING:
+    from agent.db.database import Database
     from agent.runtime.runtime import Runtime
     from agent.runtime.semaphore import ExecutionSemaphore
 
@@ -53,6 +54,8 @@ class CLI:
         self._session_id: str = ""
         self._total_tokens: int = 0
         self._has_tty = _is_real_terminal()
+        self._weather: dict | None = None
+        self._last_location: dict | None = None
 
     # -- Banner ------------------------------------------------------------
 
@@ -125,10 +128,37 @@ class CLI:
 
     # -- Status bar (row N) ------------------------------------------------
 
+    async def refresh_expedition_status(self, db: "Database") -> None:
+        from agent.db.locations_repo import LocationsRepository
+        from agent.db.weather_repo import WeatherRepository
+        locs = await LocationsRepository(db).get_latest(limit=1)
+        self._last_location = locs[0] if locs else None
+        self._weather = await WeatherRepository(db).get_latest()
+        self._render_status_bar()
+
     def _build_status_text(self) -> Text:
+        sep = " [dim]\u2502[/dim] "
         parts: list[str] = [f"session: {self._session_id}"]
+
+        if self._last_location:
+            lat = self._last_location["latitude"]
+            lon = self._last_location["longitude"]
+            parts.append(f"[cyan]{lat:.3f}, {lon:.3f}[/cyan]")
+
+        if self._weather:
+            w = self._weather
+            temp = f"{w['temperature']}°C (feels {w['apparent_temperature']}°C)"
+            condition = (w.get("condition") or "").lower()
+            if "snow" in condition:
+                precip = " ❄"
+            elif any(x in condition for x in ("rain", "drizzle", "shower")):
+                precip = " 🌧"
+            else:
+                precip = ""
+            parts.append(f"[white]{temp}{precip}[/white]")
+
         parts.append(f"tokens: {self._total_tokens:,}")
-        return Text.from_markup(" [dim]\u2502[/dim] ".join(parts))
+        return Text.from_markup(sep.join(parts))
 
     def _render_status_bar(self) -> None:
         if not self._has_tty:
@@ -233,11 +263,24 @@ class CLI:
         self,
         runtime: Runtime,
         semaphore: ExecutionSemaphore | None = None,
+        db: "Database | None" = None,
+        status_refresh_interval: int = 300,
     ) -> None:
         self._setup_terminal()
         self._render_banner()
         self._session_id = await runtime.start_session()
-        self._render_status_bar()
+        if db:
+            await self.refresh_expedition_status(db)
+        else:
+            self._render_status_bar()
+
+        async def _status_loop() -> None:
+            while True:
+                await asyncio.sleep(status_refresh_interval)
+                if db:
+                    await self.refresh_expedition_status(db)
+
+        status_task = asyncio.create_task(_status_loop(), name="status-refresh")
 
         try:
             while True:
@@ -269,9 +312,13 @@ class CLI:
                 async with self._thinking():
                     await runtime.process_message(self._session_id, user_input)
 
+                if db:
+                    await self.refresh_expedition_status(db)
+
                 if semaphore:
                     semaphore.release()
 
         finally:
+            status_task.cancel()
             self._teardown_terminal()
             self._console.print("[dim]Goodbye![/dim]")

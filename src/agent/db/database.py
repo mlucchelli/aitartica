@@ -89,15 +89,21 @@ class Database:
     async def _create_weather_table(self) -> None:
         await self._conn.execute("""
             CREATE TABLE IF NOT EXISTS weather_snapshots (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                latitude      REAL    NOT NULL,
-                longitude     REAL    NOT NULL,
-                temperature   REAL,
-                wind_speed    REAL,
-                wind_direction REAL,
-                condition     TEXT,
-                raw_json      TEXT,
-                recorded_at   TEXT    NOT NULL
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                latitude             REAL    NOT NULL,
+                longitude            REAL    NOT NULL,
+                temperature          REAL,
+                apparent_temperature REAL,
+                wind_speed           REAL,
+                wind_gusts           REAL,
+                wind_direction       REAL,
+                precipitation        REAL,
+                snowfall             REAL,
+                snow_depth           REAL,
+                surface_pressure     REAL,
+                condition            TEXT,
+                raw_json             TEXT,
+                recorded_at          TEXT    NOT NULL
             )
         """)
 

@@ -493,9 +493,10 @@ python -m agent --config configs/expedition_config.json --session <id>    # resu
 | 10 | HTTP server: POST /locations → process_location task                         | Done     |
 | 11 | ExecutionSemaphore + Scheduler (60s tick, weather schedule)                  | Done     |
 | 12 | Semaphore redesign (lock-based typing, 4 states) + FIFO tasks (no priority) + CLI async input + recursive runtime chaining | Done     |
-| 13 | TaskRunner: dispatches all 9 task types + CLI task progress output           | Planned  |
-| 14 | ImagePreprocessingService (Pillow EXIF + resize) + OllamaClient              | Planned  |
-| 15 | PhotoService: full pipeline orchestration + significance scoring             | Planned  |
-| 16 | WeatherService: Open-Meteo fetch + DB persistence                            | Planned  |
-| 17 | All 12 actions wired + RESPONSE_FORMAT schema                                | Planned  |
-| 18 | RemoteSyncService: Railway API publishing                                    | Planned  |
+| 13 | TaskRunner: dispatches all 9 task types + CLI task progress output           | Done     |
+| 14 | OllamaClient + .env loading + provider config + DB wiring + scheduler/HTTP/semaphore all wired in __main__.py | Done     |
+| 15 | WeatherService: Open-Meteo ECMWF full Antarctic fields + DB persistence + get_weather live fetch | Done     |
+| 16 | CLI status bar: location + weather + precipitation + 5min auto-refresh       | Done     |
+| 17 | ImagePreprocessingService (Pillow EXIF + resize) + OllamaVisionClient        | Planned  |
+| 18 | PhotoService: full pipeline orchestration + significance scoring             | Planned  |
+| 19 | RemoteSyncService: Railway API publishing                                    | Planned  |
