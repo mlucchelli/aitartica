@@ -112,7 +112,7 @@ A 60-second tick loop that only fires when the semaphore is idle. Generates `fet
 | Config | Pydantic v2 + JSON |
 | Weather API | Open-Meteo ECMWF IFS |
 
-Everything runs offline except weather fetching and remote publishing. No GPU required — M3 Pro 18GB handles `qwen2.5vl:7b` + `nomic-embed-text` comfortably.
+Everything runs offline except weather fetching and remote publishing. No dedicated GPU required — Apple Silicon unified memory handles all three models simultaneously.
 
 ---
 
@@ -166,22 +166,95 @@ data/
 
 ## Setup
 
+### 1. Install Ollama
+
+Download and install Ollama from [ollama.com](https://ollama.com). Verify it's running:
+
 ```bash
-# 1. Clone and install
+ollama list   # should return an empty table or existing models
+```
+
+### 2. Pull required models
+
+Antartia uses three Ollama models. Pull all of them before the first run:
+
+```bash
+# Chat LLM — main reasoning model
+ollama pull qwen3.5:9b
+
+# Vision + significance scoring — photo description and relevance rating
+ollama pull qwen2.5vl:7b
+
+# Embeddings — knowledge base semantic search
+ollama pull nomic-embed-text
+```
+
+| Model | Role | Size |
+|---|---|---|
+| `qwen3.5:9b` | Chat LLM — drives tool chaining and replies | ~6 GB |
+| `qwen2.5vl:7b` | Vision + significance scoring | ~5 GB |
+| `nomic-embed-text` | Embeddings for knowledge base | ~300 MB |
+
+> Models load on demand and unload between uses — you don't need them all in memory at once.
+
+### 3. Clone and install
+
+```bash
 git clone https://github.com/mlucchelli/antartia.git
 cd antartia
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+```
 
-# 2. Pull Ollama models
-ollama pull qwen2.5vl:7b
-ollama pull nomic-embed-text
+### 4. Configure environment
 
-# 3. Configure environment
+```bash
 cp .env.example .env
-# Edit .env — set DB_PATH, photo dirs, OLLAMA_URL, etc.
+```
 
-# 4. Run
+Edit `.env` with your paths:
+
+```env
+# Database
+DB_PATH=./data/expedition.db
+
+# Ollama
+OLLAMA_URL=http://localhost:11434
+
+# Photo pipeline
+PHOTO_INBOX_DIR=./data/photos/inbox
+PHOTO_PROCESSED_DIR=./data/photos/processed
+PHOTO_PREVIEW_DIR=./data/photos/vision_preview
+VISION_MAX_DIM=800
+VISION_MIN_DIM=640
+
+# Knowledge base
+KNOWLEDGE_CHROMA_DIR=./data/knowledge_db
+KNOWLEDGE_SOURCE_DIR=./data/knowledge
+
+# HTTP server (GPS receiver)
+HTTP_HOST=0.0.0.0
+HTTP_PORT=8080
+SCHEDULER_TICK_SECONDS=60
+
+# Remote publishing (optional)
+REMOTE_SYNC_BASE_URL=https://your-railway-app.railway.app
+REMOTE_SYNC_API_KEY=your_key_here
+
+# Cloud LLM fallback (optional)
+OPENROUTER_API_KEY=your_key_here
+```
+
+### 5. Create data directories
+
+```bash
+mkdir -p data/photos/inbox data/photos/processed data/photos/vision_preview
+mkdir -p data/knowledge data/knowledge_db
+```
+
+### 6. Run
+
+```bash
 python -m agent --config configs/expedition_config.json
 ```
 
