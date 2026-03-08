@@ -137,7 +137,7 @@ class PhotoService:
                 resp = await client.post(
                     f"{self._config.photo_pipeline.ollama_url}/api/generate",
                     json=body,
-                    timeout=60.0,
+                    timeout=httpx.Timeout(connect=30.0, read=None, write=30.0, pool=30.0),
                 )
                 resp.raise_for_status()
 

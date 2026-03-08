@@ -55,7 +55,7 @@ class OllamaVisionClient:
             resp = await client.post(
                 f"{self._base_url}/api/generate",
                 json=body,
-                timeout=180.0,
+                timeout=httpx.Timeout(connect=30.0, read=None, write=30.0, pool=30.0),
             )
             resp.raise_for_status()
 
