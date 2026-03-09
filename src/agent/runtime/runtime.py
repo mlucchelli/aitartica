@@ -219,7 +219,7 @@ class Runtime:
                     return f"unknown tool: {action_type}"
         except Exception as exc:
             logger.exception("Tool %s failed: %s", action_type, exc)
-            return f"error executing {action_type}: {exc}"
+            return f"error executing {action_type}: {type(exc).__name__}: {exc}"
 
     async def _log_tokens(
         self,
@@ -404,7 +404,7 @@ class Runtime:
 
     async def _tool_get_distance(self, payload: dict) -> str:
         from agent.services.distance_service import DistanceService
-        svc = DistanceService(self._require_db())
+        svc = DistanceService(self._require_db(), self._config.agent.timezone)
         date = payload.get("date")
         if date:
             km = await svc.get_distance_for_date(date)

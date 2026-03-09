@@ -15,6 +15,7 @@ class AgentConfig(BaseModel):
     vision_model: str = "qwen2.5vl:7b"
     temperature: float = 0.7
     max_tokens: int = 500
+    timezone: str = "America/Argentina/Buenos_Aires"
 
 
 class PersonalityConfig(BaseModel):

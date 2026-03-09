@@ -205,7 +205,7 @@ class CLI:
         if self._db is None:
             return
         from agent.services.distance_service import DistanceService
-        self._today_km = await DistanceService(self._db).get_today_distance()
+        self._today_km = await DistanceService(self._db, self._config.agent.timezone).get_today_distance()
         self._render_status_bar()
 
     def display(self, content: str) -> None:
@@ -253,7 +253,7 @@ class CLI:
 
         try:
             from agent.services.distance_service import DistanceService
-            self._today_km = await DistanceService(db).get_today_distance()
+            self._today_km = await DistanceService(db, self._config.agent.timezone).get_today_distance()
         except Exception:
             self._today_km = 0.0
 

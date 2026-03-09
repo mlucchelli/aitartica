@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from agent.db.database import Database
 from agent.db.locations_repo import LocationsRepository
 
 
 class DistanceService:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, timezone: str = "America/Argentina/Buenos_Aires") -> None:
         self._db = db
+        self._timezone = timezone
 
     def _haversine(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         R = 6371.0
@@ -20,8 +22,7 @@ class DistanceService:
         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
     def _today_str(self) -> str:
-        # Use system local timezone — the machine travels with the expedition
-        return datetime.now().astimezone().strftime("%Y-%m-%d")
+        return datetime.now(tz=ZoneInfo(self._timezone)).strftime("%Y-%m-%d")
 
     async def _sum_distance(self, date_str: str) -> float:
         points = await LocationsRepository(self._db).get_by_date(date_str)
