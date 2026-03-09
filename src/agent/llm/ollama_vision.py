@@ -23,6 +23,7 @@ _VISION_PROMPT_SUFFIX = (
 class VisionResult:
     description: str  # full detailed analysis
     summary: str      # one-liner for CLI display
+    usage: dict       # {"prompt_tokens": int, "completion_tokens": int}
 
 
 class OllamaVisionClient:
@@ -60,7 +61,12 @@ class OllamaVisionClient:
             )
             resp.raise_for_status()
 
-        raw = resp.json().get("response", "").strip()
+        resp_json = resp.json()
+        raw = resp_json.get("response", "").strip()
+        usage = {
+            "prompt_tokens": resp_json.get("prompt_eval_count", 0),
+            "completion_tokens": resp_json.get("eval_count", 0),
+        }
 
         try:
             parsed = json.loads(raw)
@@ -71,4 +77,4 @@ class OllamaVisionClient:
             summary = raw[:100]
 
         logger.info("Vision: %s — %s", path.name, summary)
-        return VisionResult(description=description, summary=summary)
+        return VisionResult(description=description, summary=summary, usage=usage)

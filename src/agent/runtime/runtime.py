@@ -78,6 +78,14 @@ class Runtime:
 
     async def process_message(self, session_id: str, user_message: str) -> None:
         state = await self._store.get(session_id)
+
+        # Update knowledge docs list in metadata for the prompt builder
+        if self._db:
+            from agent.db.knowledge_docs_repo import KnowledgeDocsRepository
+            repo = KnowledgeDocsRepository(self._db)
+            docs = await repo.get_all(status="indexed")
+            state.metadata["knowledge_docs"] = [d["file_name"] for d in docs]
+
         system_prompt = self._prompt_builder.build(state)
         state.add_message("user", user_message)
 
@@ -93,18 +101,27 @@ class Runtime:
             self._output.on_llm_start(depth)
             logger.info("LLM invoke depth=%d session=%s", depth, session_id)
             response = await self._llm.ainvoke(messages, RESPONSE_FORMAT)
+            usage = response.get("_usage", {})  # read before on_llm_response pops it
             self._output.on_llm_response(response)
-
-            usage = response.get("_usage", {})
             logger.info(
-                "LLM response depth=%d tokens=%s actions=%s",
+                "LLM response depth=%d tokens=%d actions=%s",
                 depth,
-                usage.get("total_tokens", "?"),
+                usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
                 [a.get("type") for a in self._extract_actions(response)],
+            )
+            await self._log_tokens(
+                session_id=session_id,
+                model=self._config.agent.model,
+                call_type="chat",
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
             )
 
             raw_actions = self._extract_actions(response)
             actions = self._parser.parse(raw_actions)
+
+            # send_message only auto-finishes when no tool calls are pending in the same batch
+            has_tool_actions = any(isinstance(a, ToolAction) for a in actions)
 
             # Execute all actions in order
             finish = False
@@ -122,7 +139,8 @@ class Runtime:
                         self._output.display(result)
                         logger.info("Message sent: %s…", result[:80].replace("\n", " "))
                     did_something = True
-                    finish = True  # sending a message always ends the chain
+                    if not has_tool_actions:
+                        finish = True  # no tool calls pending — treat as final message
                 elif isinstance(action, ToolAction):
                     tool_result = await self._dispatch_tool(action.type, action.payload)
                     logger.info("Tool %s → %s…", action.type, str(tool_result)[:120].replace("\n", " "))
@@ -193,11 +211,37 @@ class Runtime:
                     return await self._tool_clear_knowledge(payload)
                 case "get_logs":
                     return await self._tool_get_logs(payload)
+                case "get_token_usage":
+                    return await self._tool_get_token_usage(payload)
                 case _:
                     return f"unknown tool: {action_type}"
         except Exception as exc:
             logger.exception("Tool %s failed: %s", action_type, exc)
             return f"error executing {action_type}: {exc}"
+
+    async def _log_tokens(
+        self,
+        session_id: str,
+        model: str,
+        call_type: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+    ) -> None:
+        if self._db is None or (prompt_tokens == 0 and completion_tokens == 0):
+            return
+        try:
+            from agent.db.token_usage_repo import TokenUsageRepository
+            await TokenUsageRepository(self._db).insert(
+                model=model,
+                call_type=call_type,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                session_id=session_id,
+            )
+            total = prompt_tokens + completion_tokens
+            self._output.on_tokens_used(total)
+        except Exception as exc:
+            logger.warning("Failed to log tokens: %s", exc)
 
     async def _log_activity(self, session_id: str, action_type: str, payload: dict, result: str) -> None:
         if self._db is None:
@@ -273,15 +317,20 @@ class Runtime:
         svc = PhotoService(self._config, db, self._output)
         new_count = await svc.scan_inbox()
 
-        # Process all pending photos (newly discovered + any left from previous scans)
-        pending = await PhotosRepository(db).get_all(vision_status="pending")
-        for photo in pending:
+        # Process all pending + stuck-analyzing photos
+        to_process = await PhotosRepository(db).get_all(vision_status="pending")
+        stuck = await PhotosRepository(db).get_all(vision_status="analyzing")
+        to_process = to_process + stuck
+        for photo in to_process:
             await svc.process_photo(photo["id"])
 
-        total = len(pending)
+        total = len(to_process)
         if new_count == 0 and total == 0:
             return "inbox is empty — no new or pending photos found"
-        return f"scanned inbox: {new_count} new, {total} processed"
+        recovered = len(stuck)
+        return f"scanned inbox: {new_count} new, {total} processed" + (
+            f" ({recovered} recovered from stuck state)" if recovered else ""
+        )
 
     async def _tool_publish_daily_progress(self, payload: dict) -> str:
         # Full implementation in RemoteSyncService (commit 18)
@@ -339,10 +388,28 @@ class Runtime:
         rows = await repo.get_by_range(from_dt, to_dt)
         if not rows:
             return "no activity logs found for the given range"
-        return json.dumps(rows, default=str)
+        lines = []
+        for r in rows:
+            ts = (r.get("created_at") or "")[:19].replace("T", " ")
+            lines.append(f"{ts}  {r['action_type']}")
+        return "\n".join(lines)
 
     async def _tool_clear_knowledge(self, payload: dict) -> str:
         from agent.services.knowledge_service import KnowledgeService
         svc = KnowledgeService(self._config, self._require_db(), self._output)
         await svc.clear()
         return "knowledge base cleared — vector store and document records wiped"
+
+    async def _tool_get_token_usage(self, payload: dict) -> str:
+        from agent.db.token_usage_repo import TokenUsageRepository
+        repo = TokenUsageRepository(self._require_db())
+        totals = await repo.get_total()
+        by_type = await repo.get_by_call_type()
+        breakdown = ", ".join(
+            f"{r['call_type']}: {r['total_tokens']:,} ({r['calls']} calls)" for r in by_type
+        )
+        return (
+            f"total tokens used: {totals['total']:,} "
+            f"(prompt: {totals['prompt']:,}, completion: {totals['completion']:,})"
+            + (f" — breakdown: {breakdown}" if breakdown else "")
+        )

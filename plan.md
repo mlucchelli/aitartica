@@ -556,7 +556,7 @@ python -m agent --config configs/expedition_config.json --session <id>    # resu
 | 17 | ImagePreprocessingService (Pillow EXIF + resize + copy opt) + OllamaVisionClient (qwen2.5vl:7b) structured output (description + summary) | Done        |
 | 18 | PhotoService: scan inbox, preprocess, vision, Ollama significance scoring, DB, move to processed | Done        |
 | 19 | Embedding pipeline + `search_knowledge` / `index_knowledge` actions (ChromaDB + nomic-embed-text) | Done        |
-| 20 | Activity log: auto-logging in Runtime + `get_logs` action                    | **Next**    |
+| 20 | Activity log: auto-logging in Runtime + `get_logs` action                    | Next        |
 | 21 | Distance service: Haversine + `get_distance` action + `timezone` config + status bar `↗ 14.2 km today` | Planned     |
 | 22 | Soul prompt: agent identity/essence injected in every LLM call               | Planned     |
 | 23 | Manual location insertion: `add_location` action (GPS fallback)              | Planned     |

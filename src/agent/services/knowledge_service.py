@@ -105,6 +105,9 @@ class KnowledgeService:
         return [c for c in chunks if c]
 
     async def _embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed texts, log token usage to DB and output handler. Returns embeddings."""
+        from agent.db.token_usage_repo import TokenUsageRepository
+        prompt_tokens = 0
         async with httpx.AsyncClient() as client:
             # Try batch endpoint first (Ollama >= 0.1.26)
             resp = await client.post(
@@ -122,10 +125,25 @@ class KnowledgeService:
                         timeout=httpx.Timeout(connect=30.0, read=None, write=30.0, pool=30.0),
                     )
                     r.raise_for_status()
-                    embeddings.append(r.json()["embedding"])
-                return embeddings
-            resp.raise_for_status()
-        return resp.json()["embeddings"]
+                    rj = r.json()
+                    embeddings.append(rj["embedding"])
+                    prompt_tokens += rj.get("prompt_eval_count", 0)
+            else:
+                resp.raise_for_status()
+                rj = resp.json()
+                embeddings = rj["embeddings"]
+                prompt_tokens = rj.get("prompt_eval_count", 0)
+
+        if prompt_tokens and self._db:
+            await TokenUsageRepository(self._db).insert(
+                model=self._cfg.embedding_model,
+                call_type="embedding",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=0,
+            )
+        if prompt_tokens and self._output and hasattr(self._output, "on_tokens_used"):
+            self._output.on_tokens_used(prompt_tokens)
+        return embeddings
 
     async def index_documents(self) -> int:
         inbox_dir = Path(self._cfg.inbox_dir)

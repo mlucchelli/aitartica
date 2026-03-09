@@ -65,6 +65,8 @@ class PhotoService:
 
     async def process_photo(self, photo_id: int) -> None:
         """Preprocess → vision → score → persist → move original."""
+        from agent.db.token_usage_repo import TokenUsageRepository
+        token_repo = TokenUsageRepository(self._db)
         photos_repo = PhotosRepository(self._db)
         photo = await photos_repo.get_by_id(photo_id)
         if photo is None:
@@ -92,10 +94,28 @@ class PhotoService:
         self._output.on_vision_start(filename)
         vision_result = await self._vision.describe(preprocess.preview_path)
         self._output.on_task_progress(f"  ◈ {vision_result.summary}")
+        vision_tokens = vision_result.usage.get("prompt_tokens", 0) + vision_result.usage.get("completion_tokens", 0)
+        await token_repo.insert(
+            model=self._config.agent.vision_model,
+            call_type="vision",
+            prompt_tokens=vision_result.usage.get("prompt_tokens", 0),
+            completion_tokens=vision_result.usage.get("completion_tokens", 0),
+        )
+        if vision_tokens:
+            self._output.on_tokens_used(vision_tokens)
 
         # ── Step 3: significance scoring ──────────────────────────────────────
         self._output.on_task_progress(f"scoring: {filename}")
-        score = await self._score_significance(vision_result.description)
+        score, scoring_usage = await self._score_significance(vision_result.description)
+        scoring_tokens = scoring_usage.get("prompt_tokens", 0) + scoring_usage.get("completion_tokens", 0)
+        await token_repo.insert(
+            model=self._config.agent.vision_model,
+            call_type="scoring",
+            prompt_tokens=scoring_usage.get("prompt_tokens", 0),
+            completion_tokens=scoring_usage.get("completion_tokens", 0),
+        )
+        if scoring_tokens:
+            self._output.on_tokens_used(scoring_tokens)
         is_candidate = score >= self._threshold
         self._output.on_task_progress(
             f"  score={score:.2f} — "
@@ -121,8 +141,8 @@ class PhotoService:
             moved_to_path=str(moved_path),
         )
 
-    async def _score_significance(self, description: str) -> float:
-        """Score description significance via Ollama. Returns 0.0–1.0."""
+    async def _score_significance(self, description: str) -> tuple[float, dict]:
+        """Score description significance via Ollama. Returns (score 0.0–1.0, usage dict)."""
         prompt = self._config.photo_pipeline.scoring_prompt + description
 
         body = {
@@ -142,11 +162,16 @@ class PhotoService:
                 )
                 resp.raise_for_status()
 
-            raw = resp.json().get("response", "").strip()
+            resp_json = resp.json()
+            usage = {
+                "prompt_tokens": resp_json.get("prompt_eval_count", 0),
+                "completion_tokens": resp_json.get("eval_count", 0),
+            }
+            raw = resp_json.get("response", "").strip()
             data = json.loads(raw)
             score = float(data.get("significance_score", 0.5))
-            return max(0.0, min(1.0, score))
+            return max(0.0, min(1.0, score)), usage
 
         except Exception as exc:
             logger.warning("Significance scoring failed (%s) — defaulting to 0.5", exc)
-            return 0.5
+            return 0.5, {}

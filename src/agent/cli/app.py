@@ -94,8 +94,8 @@ class CLI:
             ))
 
     def on_llm_response(self, response: dict) -> None:
-        usage = response.pop("_usage", {})
-        self._total_tokens += usage.get("total_tokens", 0)
+        # token counting is handled via on_tokens_used() from runtime._log_tokens()
+        response.pop("_usage", None)
         self._render_status_bar()
 
         if self._debug:
@@ -109,22 +109,19 @@ class CLI:
         self._render_status_bar()
 
     def on_llm_start(self, depth: int) -> None:
-        if not self._verbose:
-            return
         if depth == 0:
             self._console.print("  [dim cyan]▸ reasoning...[/dim cyan]")
         else:
             self._console.print(f"  [dim cyan]▸ reasoning... ({depth})[/dim cyan]")
 
     def on_vision_start(self, filename: str) -> None:
-        if not self._verbose:
-            return
         self._console.print(f"  [dim magenta]◈ analyzing {filename}[/dim magenta]")
 
     def on_action_start(self, action_type: str) -> None:
-        if not self._verbose:
+        # Always show tool calls; hide send_message/finish noise
+        if action_type in ("send_message", "finish"):
             return
-        self._console.print(f"  [dim]executing: {action_type}[/dim]")
+        self._console.print(f"  [dim]⟳ {action_type}[/dim]")
 
     def _print_to_scroll(self, markup: str) -> None:
         """Print into the scroll region, preserving the input cursor position."""
@@ -144,6 +141,10 @@ class CLI:
 
     def on_task_start(self, task_type: str, source: str) -> None:
         self._running_task = {"type": task_type, "source": source}
+        self._render_status_bar()
+
+    def on_tokens_used(self, count: int) -> None:
+        self._total_tokens += count
         self._render_status_bar()
 
     def on_task_complete(self, task_type: str, source: str, success: bool) -> None:
@@ -189,6 +190,7 @@ class CLI:
     async def refresh_expedition_status(self, db: "Database") -> None:
         from agent.db.locations_repo import LocationsRepository
         from agent.db.tasks_repo import TasksRepository
+        from agent.db.token_usage_repo import TokenUsageRepository
         from agent.db.weather_repo import WeatherRepository
 
         locs = await LocationsRepository(db).get_latest(limit=1)
@@ -203,6 +205,9 @@ class CLI:
                 "success": last["status"] == "completed",
                 "at": (last.get("executed_at") or "")[:16].replace("T", " ")[11:16],
             }
+
+        totals = await TokenUsageRepository(db).get_total()
+        self._total_tokens = totals["total"]
 
         self._render_status_bar()
 

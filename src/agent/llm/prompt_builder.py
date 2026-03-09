@@ -36,6 +36,11 @@ class PromptBuilder:
         # {state_context} — expedition runtime context
         template = template.replace("{state_context}", self._build_state_context(state))
 
+        # {knowledge_docs} — list of available documents in the KB
+        docs_list = state.metadata.get("knowledge_docs", [])
+        docs_str = "\n".join(f"- {d}" for d in docs_list) if docs_list else "No documents indexed yet."
+        template = template.replace("{knowledge_docs}", docs_str)
+
         # Append dynamic sections from config
         dynamic = self._config.system_prompt.dynamic_sections
         if dynamic:

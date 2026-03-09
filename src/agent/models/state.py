@@ -20,6 +20,7 @@ class ConversationState(BaseModel):
     started_at: datetime = Field(default_factory=_now)
     last_activity: datetime = Field(default_factory=_now)
     messages: list[Message] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
 
     def add_message(self, role: str, content: str) -> None:
         self.messages.append(Message(role=role, content=content))

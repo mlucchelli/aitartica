@@ -113,3 +113,7 @@ class ClearKnowledgeAction(ToolAction):
 
 class GetLogsAction(ToolAction):
     type: str = "get_logs"
+
+
+class GetTokenUsageAction(ToolAction):
+    type: str = "get_token_usage"
