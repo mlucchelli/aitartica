@@ -38,16 +38,17 @@ Phase 2 completes the **outbound publishing layer** (agent → Railway server). 
 | 20   | Activity log: auto-logging all tool calls + `get_logs` action                                     | ✅ Done             |
 | 21   | Distance service: Haversine + `get_distance` action + status bar `↗ km today`                    | ✅ Done             |
 | 21.5 | Token usage: all LLM calls logged to DB + global counter + status bar + `get_token_usage`        | ✅ Done             |
-| 21.6 | Scroll region fix: `_scroll_row` tracking + `_readline_active` split                              | ⏳ Pending commit   |
+| 21.6 | Scroll region fix: `_scroll_row` tracking + `_readline_active` split                              | ✅ Done             |
 | 22   | Soul prompt: agent identity injected in every LLM call                                            | ⏸️ Postponed        |
-| 23   | `add_location`: manual GPS insertion (fallback when iPhone fails)                                  | ⏳ Pending commit   |
-| 24   | Daily reflection: `create_reflection` action + scheduled once-a-day task                           | ⏳ Pending commit   |
+| 23   | `add_location`: manual GPS insertion (fallback when iPhone fails)                                  | ✅ Done             |
+| 24   | Daily reflection: `create_reflection` action + scheduled once-a-day task                           | ✅ Done             |
 | 25   | Twitter/X: `post_tweet` + `tweet_image` actions                                                   | ⏸️ Postponed        |
 | 26   | Photo appreciation: emotional/scientific appraisal added to vision                                | ⏸️ Postponed        |
-| 27   | Route analysis: `analyze_route` + `get_route_analysis` + scheduled every 12h                      | ⏳ Pending commit   |
-| 27.5 | Semaphore fix: remove `_poll_typing` + task spinner during background tasks                       | ⏳ Pending commit   |
-| 28   | Photo model: latitude + longitude at process time + `tags` column + `get_wildlife_count`          | 🔜 Next             |
-| 29   | RemoteSyncService + config (`start_date`, `base_url_env`) + DB helpers                            | 📋 Planned          |
+| 27   | Route analysis: `analyze_route` + `get_route_analysis` + scheduled every 12h                      | ✅ Done             |
+| 27.5 | Semaphore fix: remove `_poll_typing` + task spinner during background tasks                       | ✅ Done             |
+| 27.6 | Prompt improvements (personality, vision, scoring, system_prompt, actions) + eval framework      | ✅ Done             |
+| 28   | Photo model: latitude + longitude at process time + `tags` column + `get_wildlife_count`          | ✅ Done             |
+| 29   | RemoteSyncService + config (`start_date`, `base_url_env`) + DB helpers                            | 🔜 Next             |
 | 30   | `publish_reflection` + `publish_route_analysis` actions                                           | 📋 Planned          |
 | 31   | `publish_daily_progress`: expedition_day, all-time stats, wildlife, `tokens_used_total`           | 📋 Planned          |
 | 32   | `upload_image` real implementation: multipart POST + tags + GPS in metadata                       | 📋 Planned          |
@@ -106,6 +107,49 @@ graph TD
     Pos --> Tokens[tokens_used_total: TokenUsageRepository.get_total]
     Tokens --> Push[RemoteSyncService.push /api/progress]
     Push --> Result[return: published / error]
+```
+
+---
+
+## Commit 27.6 — Prompt improvements + eval framework
+
+### Design
+
+All four major prompts were rewritten to reflect Antartia's identity as the first AI operating from within Antarctica. The eval framework provides an LLM-as-judge pipeline for regression testing the agent against a golden dataset.
+
+**Prompt changes:**
+- `personality.prompt` — adventurous, witnessing, fascinated; short dense sentences; precise emotional register; awareness of being first AI in Antarctica
+- `system_prompt.template` — added Workflow section; removed duplicate prose; merged rules 7+8 into single "learn constantly" rule; action descriptions tightened
+- `vision_prompt` — structured field observation format with labeled sections (SUBJECT / BEHAVIOR / ENVIRONMENT / ATMOSPHERE / COMPOSITION / VESSEL / HUMAN PRESENCE); minimum 5–7 sentences; taxonomic precision
+- `scoring_prompt` — expedition significance framing with calibration guidance (most photos 0.40–0.70, 0.85+ reserved); agent fascination included; special case for photos showing the Antartia system itself
+
+**Eval framework:**
+- `eval/runner.py` — `call_agent()` (Ollama) + `call_judge()` (OpenRouter GPT-4o-mini) + `run_case()`
+- `eval/prompts.py` — mock state/knowledge for agent; judge system prompt; per-case scoring rubric (tool_sequence / output_quality / persona, 0–10)
+- `eval/reporter.py` — Rich terminal reporter with panels, score bars, per-category breakdown
+- `run_evals.py` — CLI with `--category`, `--id`, `--limit`, `--verbose`, `--concurrency`; Rich Live display with live pass/fail counts; auto-saves JSON run to `data/evals/runs/<timestamp>_<hex>.json`
+- `data/evals/datasets/golden_dataset.csv` — 40 cases across 9 categories: navigation, weather, photos, knowledge, reflection, publishing, error_handling, identity, learning
+- `EVAL_JUDGE_MODEL` env var; concurrency default=1 (thinking mode compatibility); `read=None` timeout on all Ollama calls
+
+### New files
+
+| File | Description |
+|------|-------------|
+| `eval/__init__.py` | Package init |
+| `eval/runner.py` | Agent + judge LLM callers, `run_case()` |
+| `eval/prompts.py` | Mock state/knowledge + judge prompts |
+| `eval/reporter.py` | Rich terminal summary reporter |
+| `run_evals.py` | CLI eval runner with Live display |
+| `data/evals/datasets/golden_dataset.csv` | 40-case golden dataset |
+
+### Test
+
+```bash
+source .venv/bin/activate && python3 run_evals.py --limit 5
+# Expect: Rich panel header, live table growing with scores, run saved to data/evals/runs/
+
+python3 run_evals.py --category navigation
+# Filter to navigation cases only
 ```
 
 ---

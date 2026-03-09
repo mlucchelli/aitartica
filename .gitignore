@@ -25,3 +25,6 @@ data/knowledge_db/
 # Knowledge documents (local only)
 data/knowledge/inbox/
 data/knowledge/processed/
+
+# Eval run results (local only)
+data/evals/runs/
