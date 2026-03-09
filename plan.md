@@ -555,11 +555,13 @@ python -m agent --config configs/expedition_config.json --session <id>    # resu
 | 16 | CLI status bar: location + weather + precipitation + 5min auto-refresh       | Done        |
 | 17 | ImagePreprocessingService (Pillow EXIF + resize + copy opt) + OllamaVisionClient (qwen2.5vl:7b) structured output (description + summary) | Done        |
 | 18 | PhotoService: scan inbox, preprocess, vision, Ollama significance scoring, DB, move to processed | Done        |
-| 19 | Embedding pipeline + `search_knowledge` / `index_knowledge` actions (ChromaDB + nomic-embed-text) | Done        |
-| 20 | Activity log: auto-logging in Runtime + `get_logs` action                    | Next        |
-| 21 | Distance service: Haversine + `get_distance` action + `timezone` config + status bar `↗ 14.2 km today` | Planned     |
-| 22 | Soul prompt: agent identity/essence injected in every LLM call               | Planned     |
-| 23 | Manual location insertion: `add_location` action (GPS fallback)              | Planned     |
+| 19   | Embedding pipeline + `search_knowledge` / `index_knowledge` actions (ChromaDB + nomic-embed-text) | Done        |
+| 20   | Activity log: auto-logging in Runtime + `get_logs` action                    | Done        |
+| 21   | Distance service: Haversine + `get_distance` action + `timezone` config + status bar `↗ 14.2 km today` | Done        |
+| 21.5 | Token usage tracking: all LLM calls logged to DB, global counter, status bar, `get_token_usage` action | Done        |
+| 21.6 | Scroll region fix: explicit `_scroll_row` tracking, multi-line capture, `_readline_active` split | Done        |
+| 22   | Soul prompt: agent identity/essence injected in every LLM call               | Postponed   |
+| 23   | Manual location insertion: `add_location` action (GPS fallback)              | Next        |
 | 24 | Daily reflection: `create_reflection` action + scheduled once-a-day task     | Planned     |
 | 25 | Twitter/X: `post_tweet` + `tweet_image` actions, local storage, max 5/day   | Planned     |
 | 26 | Photo appreciation: emotional/scientific/touristic appraisal added to vision | Planned     |

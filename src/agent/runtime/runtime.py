@@ -215,6 +215,8 @@ class Runtime:
                     return await self._tool_get_token_usage(payload)
                 case "get_distance":
                     return await self._tool_get_distance(payload)
+                case "add_location":
+                    return await self._tool_add_location(payload)
                 case _:
                     return f"unknown tool: {action_type}"
         except Exception as exc:
@@ -401,6 +403,28 @@ class Runtime:
         svc = KnowledgeService(self._config, self._require_db(), self._output)
         await svc.clear()
         return "knowledge base cleared — vector store and document records wiped"
+
+    async def _tool_add_location(self, payload: dict) -> str:
+        from datetime import datetime, timezone
+        from agent.db.locations_repo import LocationsRepository
+        try:
+            lat = float(payload["latitude"])
+            lon = float(payload["longitude"])
+        except (KeyError, TypeError, ValueError) as exc:
+            return f"error: latitude and longitude are required floats — {exc}"
+        recorded_at_str = payload.get("recorded_at")
+        if recorded_at_str:
+            try:
+                recorded_at = datetime.fromisoformat(recorded_at_str)
+                if recorded_at.tzinfo is None:
+                    recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return f"error: invalid recorded_at format — use ISO 8601 (e.g. 2026-03-09T14:00:00Z)"
+        else:
+            recorded_at = datetime.now(timezone.utc)
+        loc = await LocationsRepository(self._require_db()).insert(lat, lon, recorded_at)
+        self._output.update_location(lat, lon)
+        return f"location added: id={loc['id']} lat={lat} lon={lon} at={recorded_at.isoformat()}"
 
     async def _tool_get_distance(self, payload: dict) -> str:
         from agent.services.distance_service import DistanceService

@@ -5,6 +5,7 @@ import logging
 from agent.models.actions import (
     Action,
     AddKnowledgeAction,
+    AddLocationAction,
     ClearKnowledgeAction,
     CreateTaskAction,
     FinishAction,
@@ -49,6 +50,7 @@ ACTION_REGISTRY: dict[str, type[Action]] = {
     "get_logs": GetLogsAction,
     "get_token_usage": GetTokenUsageAction,
     "get_distance": GetDistanceAction,
+    "add_location": AddLocationAction,
 }
 
 

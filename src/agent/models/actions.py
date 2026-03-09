@@ -121,3 +121,7 @@ class GetTokenUsageAction(ToolAction):
 
 class GetDistanceAction(ToolAction):
     type: str = "get_distance"
+
+
+class AddLocationAction(ToolAction):
+    type: str = "add_location"
