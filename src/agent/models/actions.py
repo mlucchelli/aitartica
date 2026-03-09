@@ -129,3 +129,11 @@ class AddLocationAction(ToolAction):
 
 class GetReflectionsAction(ToolAction):
     type: str = "get_reflections"
+
+
+class AnalyzeRouteAction(ToolAction):
+    type: str = "analyze_route"
+
+
+class GetRouteAnalysisAction(ToolAction):
+    type: str = "get_route_analysis"

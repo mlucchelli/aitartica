@@ -219,6 +219,10 @@ class Runtime:
                     return await self._tool_add_location(payload)
                 case "get_reflections":
                     return await self._tool_get_reflections(payload)
+                case "analyze_route":
+                    return await self._tool_analyze_route(payload)
+                case "get_route_analysis":
+                    return await self._tool_get_route_analysis(payload)
                 case _:
                     return f"unknown tool: {action_type}"
         except Exception as exc:
@@ -346,7 +350,26 @@ class Runtime:
         return "publish_route_snapshot not yet implemented"
 
     async def _tool_upload_image(self, payload: dict) -> str:
-        return "upload_image not yet implemented"
+        photo_id = payload.get("photo_id")
+        agent_quote = payload.get("agent_quote", "").strip()
+        if not photo_id:
+            return "error: photo_id is required"
+        repo = PhotosRepository(self._require_db())
+        photo = await repo.get_by_id(int(photo_id))
+        if not photo:
+            return f"error: photo {photo_id} not found"
+        if not photo.get("is_remote_candidate"):
+            return f"photo {photo_id} is not marked as remote candidate — upload skipped"
+        update: dict = {}
+        if agent_quote:
+            update["agent_quote"] = agent_quote
+        if update:
+            await repo.update(int(photo_id), **update)
+        # Remote upload not yet implemented — mark as ready for publishing
+        return (
+            f"photo {photo_id} ({photo['file_name']}) queued for upload"
+            + (f' — quote saved: "{agent_quote[:80]}"' if agent_quote else "")
+        )
 
     async def _tool_publish_agent_message(self, payload: dict) -> str:
         content = payload.get("content")
@@ -448,6 +471,29 @@ class Runtime:
             return f"{km} km on {date}"
         km = await svc.get_today_distance()
         return f"{km} km today"
+
+    async def _tool_analyze_route(self, payload: dict) -> str:
+        from agent.db.route_analyses_repo import RouteAnalysesRepository
+        from agent.services.route_analysis_service import RouteAnalysisService
+        hours = int(payload.get("hours", self._config.route_analysis.window_hours))
+        svc = RouteAnalysisService(self._require_db(), self._config.agent.timezone)
+        analysis = await svc.analyze(hours)
+        await RouteAnalysesRepository(self._require_db()).insert(analysis)
+        return analysis.to_text()
+
+    async def _tool_get_route_analysis(self, payload: dict) -> str:
+        from agent.db.route_analyses_repo import RouteAnalysesRepository
+        repo = RouteAnalysesRepository(self._require_db())
+        date = payload.get("date")
+        if date:
+            rows = await repo.get_by_date(date)
+            if not rows:
+                return f"no route analysis stored for {date}"
+            return rows[0]["summary"] or json.dumps(rows[0], default=str)
+        row = await repo.get_latest()
+        if not row:
+            return "no route analysis stored yet — call analyze_route first"
+        return row["summary"] or json.dumps(row, default=str)
 
     async def _tool_get_token_usage(self, payload: dict) -> str:
         from agent.db.token_usage_repo import TokenUsageRepository

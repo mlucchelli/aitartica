@@ -57,6 +57,8 @@ class TaskRunner:
                     await self._publish_weather_snapshot(payload)
                 case "create_reflection":
                     await self._create_reflection(payload)
+                case "analyze_route":
+                    await self._analyze_route(payload)
                 case _:
                     raise ValueError(f"unknown task type: {task_type}")
 
@@ -147,3 +149,12 @@ class TaskRunner:
         svc = ReflectionService(self._config, self._db, self._output)
         content = await svc.create_daily_reflection(date)
         self._progress(f"reflection saved ({len(content.split())} words)")
+
+    async def _analyze_route(self, payload: dict) -> None:
+        from agent.db.route_analyses_repo import RouteAnalysesRepository
+        from agent.services.route_analysis_service import RouteAnalysisService
+        hours = int(payload.get("hours", self._config.route_analysis.window_hours))
+        svc = RouteAnalysisService(self._db, self._config.agent.timezone)
+        analysis = await svc.analyze(hours)
+        await RouteAnalysesRepository(self._db).insert(analysis)
+        self._progress(f"route analysis saved: {analysis.bearing_compass} {analysis.speed_kmh} km/h, {analysis.point_count} points")

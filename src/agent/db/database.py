@@ -47,6 +47,7 @@ class Database:
         await self._create_activity_logs_table()
         await self._create_token_usage_table()
         await self._create_reflections_table()
+        await self._create_route_analyses_table()
         await self._conn.commit()
 
     async def _create_locations_table(self) -> None:
@@ -86,9 +87,15 @@ class Database:
                 vision_preview_path TEXT,
                 vision_input_width  INTEGER,
                 vision_input_height INTEGER,
-                error_message       TEXT
+                error_message       TEXT,
+                agent_quote         TEXT
             )
         """)
+        # Migration: add agent_quote to existing DBs
+        try:
+            await self._conn.execute("ALTER TABLE photos ADD COLUMN agent_quote TEXT")
+        except Exception:
+            pass
 
     async def _create_weather_table(self) -> None:
         await self._conn.execute("""
@@ -189,6 +196,31 @@ class Database:
                 content    TEXT    NOT NULL,
                 word_count INTEGER,
                 created_at TEXT    NOT NULL
+            )
+        """)
+
+    async def _create_route_analyses_table(self) -> None:
+        await self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS route_analyses (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                analyzed_at         TEXT    NOT NULL,
+                date                TEXT    NOT NULL,
+                window_hours        INTEGER NOT NULL DEFAULT 12,
+                latitude            REAL,
+                longitude           REAL,
+                point_count         INTEGER NOT NULL DEFAULT 0,
+                bearing_deg         REAL,
+                bearing_compass     TEXT,
+                speed_kmh           REAL,
+                avg_speed_kmh       REAL,
+                distance_km         REAL    NOT NULL DEFAULT 0,
+                stopped             INTEGER NOT NULL DEFAULT 0,
+                wind_speed_kmh      REAL,
+                wind_direction_deg  REAL,
+                wind_angle_label    TEXT,
+                nearest_sites_json  TEXT,
+                summary             TEXT,
+                created_at          TEXT    NOT NULL
             )
         """)
 

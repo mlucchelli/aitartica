@@ -30,6 +30,7 @@ class Scheduler:
         self._task_runner: object | None = None  # set after construction to avoid circular import
         self._last_weather_hour: int | None = None
         self._last_reflection_date: str | None = None
+        self._last_route_analysis_hour: int | None = None
 
     def set_task_runner(self, runner: "TaskRunner") -> None:
         self._task_runner = runner
@@ -92,3 +93,16 @@ class Scheduler:
             self._last_reflection_date = today_str
             await tasks_repo.insert("create_reflection", {"date": today_str}, source="scheduler")
             logger.info("Scheduler: queued create_reflection for %s", today_str)
+
+        # analyze_route — every N hours at configured UTC hours
+        cfg_ra = self._config.route_analysis
+        if (current_hour_utc in cfg_ra.schedule_hours
+                and current_hour_utc != self._last_route_analysis_hour):
+            self._last_route_analysis_hour = current_hour_utc
+            await tasks_repo.insert(
+                "analyze_route",
+                {"hours": cfg_ra.window_hours},
+                source="scheduler",
+            )
+            logger.info("Scheduler: queued analyze_route (window=%sh) at UTC hour %s",
+                        cfg_ra.window_hours, current_hour_utc)

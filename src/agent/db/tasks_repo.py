@@ -16,6 +16,7 @@ VALID_TASK_TYPES = {
     "publish_agent_message",
     "publish_weather_snapshot",
     "create_reflection",
+    "analyze_route",
 }
 
 

@@ -100,6 +100,12 @@ class ReflectionConfig(BaseModel):
     max_words: int = 300
 
 
+class RouteAnalysisConfig(BaseModel):
+    schedule_hours: list[int] = Field(default_factory=lambda: [0, 12])  # UTC hours to trigger
+    window_hours: int = 12  # how many hours of GPS history to analyze
+    min_points: int = 3     # skip if fewer points in window
+
+
 class RemoteSyncConfig(BaseModel):
     api_key_env: str = "REMOTE_SYNC_API_KEY"
     base_url: str = Field(default_factory=lambda: os.environ["REMOTE_SYNC_BASE_URL"])
@@ -125,6 +131,7 @@ class Config(BaseModel):
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     reflection: ReflectionConfig = Field(default_factory=ReflectionConfig)
+    route_analysis: RouteAnalysisConfig = Field(default_factory=RouteAnalysisConfig)
     remote_sync: RemoteSyncConfig = Field(default_factory=RemoteSyncConfig)
 
     @classmethod

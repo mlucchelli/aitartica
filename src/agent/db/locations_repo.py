@@ -36,6 +36,16 @@ class LocationsRepository:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
+    async def get_since(self, since_iso: str) -> list[dict]:
+        """Return all points recorded at or after since_iso (ISO 8601), ordered ASC.
+        Uses datetime() to normalize timezone-aware strings before comparison."""
+        async with self._db.conn.execute(
+            "SELECT * FROM locations WHERE datetime(recorded_at) >= datetime(?) ORDER BY recorded_at ASC",
+            (since_iso,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
     async def get_all(self) -> list[dict]:
         async with self._db.conn.execute(
             "SELECT * FROM locations ORDER BY recorded_at ASC"

@@ -195,9 +195,13 @@ class CLI:
             "success": success,
             "at": datetime.now().strftime("%H:%M"),
         }
-        # Render after release() changes the semaphore state
+        # Refresh distance + render after release() changes the semaphore state
         try:
-            asyncio.get_running_loop().call_soon(self._render_status_bar)
+            loop = asyncio.get_running_loop()
+            if self._db:
+                loop.create_task(self._refresh_distance())
+            else:
+                loop.call_soon(self._render_status_bar)
         except RuntimeError:
             self._render_status_bar()
 
