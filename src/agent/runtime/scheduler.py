@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from agent.config.loader import Config
 from agent.db.database import Database
+from agent.db.reflections_repo import ReflectionsRepository
 from agent.db.tasks_repo import TasksRepository
 from agent.runtime.semaphore import ExecutionSemaphore
 
@@ -90,9 +91,13 @@ class Scheduler:
         today_str = now_local.strftime("%Y-%m-%d")
         if (now_local.hour >= self._config.reflection.hour_local
                 and self._last_reflection_date != today_str):
+            existing = await ReflectionsRepository(self._db).get_by_date(today_str)
+            if not existing:
+                await tasks_repo.insert("create_reflection", {"date": today_str}, source="scheduler")
+                logger.info("Scheduler: queued create_reflection for %s", today_str)
+            else:
+                logger.info("Scheduler: reflection for %s already exists — skipping", today_str)
             self._last_reflection_date = today_str
-            await tasks_repo.insert("create_reflection", {"date": today_str}, source="scheduler")
-            logger.info("Scheduler: queued create_reflection for %s", today_str)
 
         # analyze_route — every N hours at configured UTC hours
         cfg_ra = self._config.route_analysis
