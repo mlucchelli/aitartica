@@ -218,43 +218,25 @@ class TaskRunner:
         )
 
     async def _publish_route_snapshot(self, payload: dict) -> None:
-        from datetime import datetime, timezone
         from agent.db.locations_repo import LocationsRepository
-        from agent.services.distance_service import DistanceService
         from agent.services.remote_sync_service import RemoteSyncService
-        locs = await LocationsRepository(self._db).get_all()
-        if not locs:
-            self._progress("publish_route_snapshot: no locations recorded yet")
+        location_id = payload.get("location_id")
+        if not location_id:
+            self._progress("publish_route_snapshot: no location_id in payload — skipped")
             return
-        svc = DistanceService(self._db, self._config.agent.timezone)
-        total_km = sum(
-            svc._haversine(
-                locs[i-1]["latitude"], locs[i-1]["longitude"],
-                locs[i]["latitude"],   locs[i]["longitude"],
-            )
-            for i in range(1, len(locs))
-        )
-        now = datetime.now(timezone.utc).isoformat()
-        geojson = {
-            "type": "FeatureCollection",
-            "features": [{
-                "type": "Feature",
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": [[loc["longitude"], loc["latitude"]] for loc in locs],
-                },
-                "properties": {
-                    "recorded_at_first": locs[0]["recorded_at"],
-                    "recorded_at_last":  locs[-1]["recorded_at"],
-                    "total_points":      len(locs),
-                    "distance_km":       round(total_km, 2),
-                    "last_updated":      now,
-                },
-            }],
-        }
-        result = await RemoteSyncService(self._config, self._output, self._db).push("/api/track", geojson)
+        repo = LocationsRepository(self._db)
+        loc = await repo.get_by_id(int(location_id))
+        if not loc:
+            self._progress(f"publish_route_snapshot: location id={location_id} not found")
+            return
+        result = await RemoteSyncService(self._config, self._output, self._db).push("/api/location", {
+            "latitude":    loc["latitude"],
+            "longitude":   loc["longitude"],
+            "recorded_at": loc["recorded_at"],
+        })
         self._progress(
-            f"track published ({len(locs)} points, {round(total_km, 1)} km)" if result["ok"] else f"publish_route_snapshot error: {result['error']}"
+            f"location published (id={location_id}, lat={loc['latitude']}, lon={loc['longitude']})"
+            if result["ok"] else f"publish_location error: {result['error']}"
         )
 
     async def _upload_image(self, payload: dict) -> None:
