@@ -21,6 +21,13 @@ class MessagesRepository:
         return {"id": row_id, "session_id": session_id, "role": role,
                 "content": content, "timestamp": timestamp}
 
+    async def get_by_id(self, message_id: int) -> dict | None:
+        async with self._db.conn.execute(
+            "SELECT * FROM agent_messages WHERE id = ?", (message_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
     async def get_today(self, session_id: str | None = None) -> list[dict]:
         today = datetime.now(timezone.utc).date().isoformat()
         if session_id:

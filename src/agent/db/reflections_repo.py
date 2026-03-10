@@ -24,6 +24,13 @@ class ReflectionsRepository:
         return {"id": row_id, "date": date, "content": content,
                 "word_count": word_count, "created_at": created_at}
 
+    async def get_by_id(self, reflection_id: int) -> dict | None:
+        async with self._db.conn.execute(
+            "SELECT * FROM reflections WHERE id = ?", (reflection_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
     async def get_by_date(self, date: str) -> dict | None:
         async with self._db.conn.execute(
             "SELECT * FROM reflections WHERE date = ?", (date,)

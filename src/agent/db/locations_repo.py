@@ -20,6 +20,13 @@ class LocationsRepository:
         return {"id": row_id, "latitude": latitude, "longitude": longitude,
                 "recorded_at": recorded_at.isoformat(), "received_at": received_at}
 
+    async def get_by_id(self, location_id: int) -> dict | None:
+        async with self._db.conn.execute(
+            "SELECT * FROM locations WHERE id = ?", (location_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
     async def get_latest(self, limit: int = 10) -> list[dict]:
         async with self._db.conn.execute(
             "SELECT * FROM locations ORDER BY recorded_at DESC LIMIT ?", (limit,)

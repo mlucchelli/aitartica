@@ -16,7 +16,7 @@ class TaskRunner:
     """
     Executes background tasks claimed by the Scheduler.
     Streams progress messages to the OutputHandler (visible in the scroll area).
-    Services not yet built (weather, photo, remote sync) are stubbed.
+    All publish tasks sync to the remote backend via RemoteSyncService with offline queue support.
     """
 
     def __init__(self, config: Config, db: Database, output: OutputHandler) -> None:
@@ -100,6 +100,8 @@ class TaskRunner:
                 f"location recorded: lat={loc['latitude']} lon={loc['longitude']} "
                 f"at {loc['recorded_at']}"
             )
+        location_id = payload.get("location_id")
+        await TasksRepository(self._db).insert("publish_route_snapshot", {"location_id": location_id}, source="scheduler")
 
     async def _scan_photo_inbox(self, payload: dict) -> None:
         from agent.services.photo_service import PhotoService
@@ -129,8 +131,7 @@ class TaskRunner:
             f"wind {s['wind_speed']} km/h gusts {s['wind_gusts']} km/h · "
             f"snow depth {s['snow_depth']}m · {s['condition']}"
         )
-        # auto-sync
-        await self._publish_weather_snapshot({})
+        await TasksRepository(self._db).insert("publish_weather_snapshot", {"id": s["id"]}, source="scheduler")
 
     async def _publish_daily_progress(self, payload: dict) -> None:
         from datetime import date as date_type
@@ -180,9 +181,15 @@ class TaskRunner:
         import json
         from agent.db.route_analyses_repo import RouteAnalysesRepository
         from agent.services.remote_sync_service import RemoteSyncService
+        a_id = payload.get("id")
         date = payload.get("date")
         repo = RouteAnalysesRepository(self._db)
-        a = await (repo.get_by_date(date) if date else repo.get_latest())
+        if a_id:
+            a = await repo.get_by_id(int(a_id))
+        elif date:
+            a = await repo.get_latest_by_date(date)
+        else:
+            a = await repo.get_latest()
         if not a:
             self._progress("publish_route_analysis: no route analysis found")
             return
@@ -258,8 +265,14 @@ class TaskRunner:
         from zoneinfo import ZoneInfo
         from agent.db.reflections_repo import ReflectionsRepository
         from agent.services.remote_sync_service import RemoteSyncService
-        date = payload.get("date") or datetime.now(tz=ZoneInfo(self._config.agent.timezone)).strftime("%Y-%m-%d")
-        reflection = await ReflectionsRepository(self._db).get_by_date(date)
+        repo = ReflectionsRepository(self._db)
+        r_id = payload.get("id")
+        if r_id:
+            reflection = await repo.get_by_id(int(r_id))
+            date = reflection["date"] if reflection else "unknown"
+        else:
+            date = payload.get("date") or datetime.now(tz=ZoneInfo(self._config.agent.timezone)).strftime("%Y-%m-%d")
+            reflection = await repo.get_by_date(date)
         if not reflection:
             self._progress(f"publish_reflection: no reflection for {date}")
             return
@@ -273,17 +286,28 @@ class TaskRunner:
     async def _publish_agent_message(self, payload: dict) -> None:
         from agent.db.messages_repo import MessagesRepository
         from agent.services.remote_sync_service import RemoteSyncService
-        content = (payload.get("content") or "").strip()
-        if not content:
-            self._progress("publish_agent_message: content is required")
-            return
+        repo = MessagesRepository(self._db)
+        msg_id = payload.get("id")
+        if msg_id:
+            msg = await repo.get_by_id(int(msg_id))
+            if not msg:
+                self._progress(f"publish_agent_message: message id={msg_id} not found")
+                return
+            content = msg["content"]
+        else:
+            content = (payload.get("content") or "").strip()
+            if not content:
+                self._progress("publish_agent_message: content is required")
+                return
+            msg = None
         published_at = datetime.now(timezone.utc).isoformat()
         result = await RemoteSyncService(self._config, self._output, self._db).push("/api/messages", {
             "content":      content,
             "published_at": published_at,
         })
         if result["ok"]:
-            await MessagesRepository(self._db).insert("system", "assistant", content)
+            if msg_id:
+                await repo.mark_published(int(msg_id))
             self._progress("message published")
         else:
             self._progress(f"publish_agent_message error: {result['error']}")
@@ -291,7 +315,9 @@ class TaskRunner:
     async def _publish_weather_snapshot(self, payload: dict) -> None:
         from agent.db.weather_repo import WeatherRepository
         from agent.services.remote_sync_service import RemoteSyncService
-        w = await WeatherRepository(self._db).get_latest()
+        repo = WeatherRepository(self._db)
+        w_id = payload.get("id")
+        w = await (repo.get_by_id(int(w_id)) if w_id else repo.get_latest())
         if not w:
             self._progress("publish_weather_snapshot: no weather data available")
             return
@@ -312,12 +338,14 @@ class TaskRunner:
 
     async def _create_reflection(self, payload: dict) -> None:
         from agent.services.reflection_service import ReflectionService
+        from agent.db.reflections_repo import ReflectionsRepository
         date = payload.get("date")
         svc = ReflectionService(self._config, self._db, self._output)
         content = await svc.create_daily_reflection(date)
         self._progress(f"reflection saved ({len(content.split())} words)")
-        # auto-sync
-        await self._publish_reflection({"date": date})
+        r = await ReflectionsRepository(self._db).get_by_date(date or "")
+        r_id = r["id"] if r else None
+        await TasksRepository(self._db).insert("publish_reflection", {"id": r_id} if r_id else {"date": date}, source="scheduler")
 
     async def _analyze_route(self, payload: dict) -> None:
         from agent.db.route_analyses_repo import RouteAnalysesRepository
@@ -325,8 +353,8 @@ class TaskRunner:
         hours = int(payload.get("hours", self._config.route_analysis.window_hours))
         svc = RouteAnalysisService(self._db, self._config.agent.timezone)
         analysis = await svc.analyze(hours)
-        await RouteAnalysesRepository(self._db).insert(analysis)
+        analysis_id = await RouteAnalysesRepository(self._db).insert(analysis)
         self._progress(f"route analysis saved: {analysis.bearing_compass} {analysis.speed_kmh} km/h, {analysis.point_count} points")
         repo = TasksRepository(self._db)
-        await repo.insert("publish_route_analysis", {}, source="scheduler")
+        await repo.insert("publish_route_analysis", {"id": analysis_id}, source="scheduler")
         await repo.insert("publish_daily_progress", {}, source="scheduler")

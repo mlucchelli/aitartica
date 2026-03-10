@@ -71,6 +71,21 @@ class RouteAnalysesRepository:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
+    async def get_by_id(self, analysis_id: int) -> dict | None:
+        async with self._db.conn.execute(
+            "SELECT * FROM route_analyses WHERE id = ?", (analysis_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def get_latest_by_date(self, date: str) -> dict | None:
+        async with self._db.conn.execute(
+            "SELECT * FROM route_analyses WHERE date = ? ORDER BY id DESC LIMIT 1",
+            (date,),
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
     async def get_latest(self) -> dict | None:
         async with self._db.conn.execute(
             "SELECT * FROM route_analyses ORDER BY id DESC LIMIT 1"

@@ -58,6 +58,13 @@ class WeatherRepository:
             "recorded_at": recorded_at,
         }
 
+    async def get_by_id(self, weather_id: int) -> dict | None:
+        async with self._db.conn.execute(
+            "SELECT * FROM weather_snapshots WHERE id = ?", (weather_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
     async def get_latest(self) -> dict | None:
         async with self._db.conn.execute(
             "SELECT * FROM weather_snapshots ORDER BY recorded_at DESC LIMIT 1"
