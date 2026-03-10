@@ -67,7 +67,7 @@ class RemoteSyncService:
             self._notify_end()
 
     async def push_photo(self, file_path: str, file_name: str, metadata: dict) -> dict:
-        """Multipart POST for /api/photos."""
+        """Multipart POST for /api/photos. On failure queues for retry if DB available."""
         self._notify_start()
         try:
             with open(file_path, "rb") as f:
@@ -87,10 +87,21 @@ class RemoteSyncService:
         except Exception as exc:
             error = str(exc)
             logger.warning("sync FAIL /api/photos (%s) — %s", file_name, error)
-            # photos can't be queued as JSON — return error directly
+            if self._db:
+                await self._enqueue_photo(file_path, file_name, metadata, error)
+                return {"ok": True, "queued": True}
             return {"ok": False, "error": error}
         finally:
             self._notify_end()
+
+    async def _enqueue_photo(self, file_path: str, file_name: str, metadata: dict, error: str) -> None:
+        from agent.db.sync_queue_repo import SyncQueueRepository
+        repo = SyncQueueRepository(self._db)
+        metadata_json = json.dumps({"file_name": file_name, **metadata}, ensure_ascii=False)
+        item_id = await repo.enqueue_photo(file_path, file_name, metadata_json)
+        await repo.record_attempt(item_id, error)
+        pending = await repo.count_pending()
+        logger.warning("sync queued photo %s (id=%s) — %d item(s) pending retry", file_name, item_id, pending)
 
     async def retry_pending(self) -> None:
         """Retry all pending queued items. Called by the scheduler each tick."""
@@ -102,15 +113,31 @@ class RemoteSyncService:
         if not pending:
             return
         logger.info("sync retry — %d pending item(s)", len(pending))
-        headers = {**self._headers(), "Content-Type": "application/json"}
+        json_headers = {**self._headers(), "Content-Type": "application/json"}
         for item in pending:
             path    = item["path"]
             attempt = item["attempts"] + 1
             try:
-                payload = json.loads(item["payload_json"])
-                async with httpx.AsyncClient(timeout=30) as client:
-                    r = await client.post(f"{self._base_url}{path}", json=payload, headers=headers)
-                    r.raise_for_status()
+                if item.get("type") == "photo":
+                    meta = json.loads(item["payload_json"])
+                    file_name = meta.pop("file_name", path)
+                    with open(item["file_path"], "rb") as f:
+                        file_bytes = f.read()
+                    files = {"file": (file_name, file_bytes, "image/jpeg")}
+                    data  = {"metadata": json.dumps(meta, ensure_ascii=False)}
+                    async with httpx.AsyncClient(timeout=60) as client:
+                        r = await client.post(
+                            f"{self._base_url}/api/photos",
+                            headers=self._headers(),
+                            files=files,
+                            data=data,
+                        )
+                        r.raise_for_status()
+                else:
+                    payload = json.loads(item["payload_json"])
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        r = await client.post(f"{self._base_url}{path}", json=payload, headers=json_headers)
+                        r.raise_for_status()
                 await repo.mark_sent(item["id"])
                 logger.info("sync retry OK  %s (attempt %d)", path, attempt)
             except Exception as exc:

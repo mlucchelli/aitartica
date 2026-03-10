@@ -264,3 +264,8 @@ class Database:
                 last_attempt_at TEXT
             )
         """)
+        for col in ("type TEXT NOT NULL DEFAULT 'json'", "file_path TEXT"):
+            try:
+                await self._conn.execute(f"ALTER TABLE sync_queue ADD COLUMN {col}")
+            except Exception:
+                pass

@@ -9,6 +9,17 @@ class SyncQueueRepository:
     def __init__(self, db: Database) -> None:
         self._db = db
 
+    async def enqueue_photo(self, file_path: str, file_name: str, metadata_json: str, max_attempts: int = 100) -> int:
+        created_at = datetime.now(timezone.utc).isoformat()
+        async with self._db.conn.execute(
+            """INSERT INTO sync_queue (path, payload_json, file_path, type, max_attempts, created_at)
+               VALUES ('/api/photos', ?, ?, 'photo', ?, ?)""",
+            (metadata_json, file_path, max_attempts, created_at),
+        ) as cur:
+            row_id = cur.lastrowid
+        await self._db.conn.commit()
+        return row_id
+
     async def enqueue(self, path: str, payload_json: str, max_attempts: int = 100) -> int:
         created_at = datetime.now(timezone.utc).isoformat()
         async with self._db.conn.execute(
