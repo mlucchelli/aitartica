@@ -175,7 +175,12 @@ class TaskRunner:
             "tokens_used_total":        tokens["total"],
             "published_at":             datetime.now(timezone.utc).isoformat(),
         })
-        self._progress("daily progress published" if result["ok"] else f"publish_daily_progress error: {result['error']}")
+        if result.get("queued"):
+            self._progress("daily progress queued for retry")
+        elif result["ok"]:
+            self._progress("daily progress published")
+        else:
+            self._progress(f"publish_daily_progress error: {result['error']}")
 
     async def _publish_route_analysis(self, payload: dict) -> None:
         import json
@@ -213,9 +218,12 @@ class TaskRunner:
             },
             "nearest_sites": nearest,
         })
-        self._progress(
-            f"route analysis published for {a['date']}" if result["ok"] else f"publish_route_analysis error: {result['error']}"
-        )
+        if result.get("queued"):
+            self._progress(f"route analysis queued for retry ({a['date']})")
+        elif result["ok"]:
+            self._progress(f"route analysis published for {a['date']}")
+        else:
+            self._progress(f"publish_route_analysis error: {result['error']}")
 
     async def _publish_route_snapshot(self, payload: dict) -> None:
         from agent.db.locations_repo import LocationsRepository
@@ -234,10 +242,12 @@ class TaskRunner:
             "longitude":   loc["longitude"],
             "recorded_at": loc["recorded_at"],
         })
-        self._progress(
-            f"location published (id={location_id}, lat={loc['latitude']}, lon={loc['longitude']})"
-            if result["ok"] else f"publish_location error: {result['error']}"
-        )
+        if result.get("queued"):
+            self._progress(f"location queued for retry (id={location_id})")
+        elif result["ok"]:
+            self._progress(f"location published (id={location_id}, lat={loc['latitude']}, lon={loc['longitude']})")
+        else:
+            self._progress(f"publish_location error: {result['error']}")
 
     async def _upload_image(self, payload: dict) -> None:
         photo_id = payload.get("photo_id", "?")
@@ -263,7 +273,12 @@ class TaskRunner:
             "content":    reflection["content"],
             "created_at": reflection["created_at"],
         })
-        self._progress(f"reflection published for {date}" if result["ok"] else f"publish_reflection error: {result['error']}")
+        if result.get("queued"):
+            self._progress(f"reflection queued for retry ({date})")
+        elif result["ok"]:
+            self._progress(f"reflection published for {date}")
+        else:
+            self._progress(f"publish_reflection error: {result['error']}")
 
     async def _publish_agent_message(self, payload: dict) -> None:
         from agent.db.messages_repo import MessagesRepository
@@ -287,7 +302,9 @@ class TaskRunner:
             "content":      content,
             "published_at": published_at,
         })
-        if result["ok"]:
+        if result.get("queued"):
+            self._progress("message queued for retry")
+        elif result["ok"]:
             if msg_id:
                 await repo.mark_published(int(msg_id))
             self._progress("message published")
@@ -316,7 +333,12 @@ class TaskRunner:
             "condition":            w["condition"],
             "recorded_at":          w["recorded_at"],
         })
-        self._progress("weather published" if result["ok"] else f"publish_weather_snapshot error: {result['error']}")
+        if result.get("queued"):
+            self._progress("weather queued for retry")
+        elif result["ok"]:
+            self._progress("weather published")
+        else:
+            self._progress(f"publish_weather_snapshot error: {result['error']}")
 
     async def _create_reflection(self, payload: dict) -> None:
         from agent.services.reflection_service import ReflectionService
