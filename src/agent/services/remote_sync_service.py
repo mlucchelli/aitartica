@@ -73,7 +73,7 @@ class RemoteSyncService:
             with open(file_path, "rb") as f:
                 file_bytes = f.read()
             files = {"file": (file_name, file_bytes, "image/jpeg")}
-            data  = {"file_name": file_name, "metadata": json.dumps(metadata, ensure_ascii=False)}
+            data  = {"metadata": json.dumps(metadata, ensure_ascii=False)}
             async with httpx.AsyncClient(timeout=60) as client:
                 r = await client.post(
                     f"{self._base_url}/api/photos",
@@ -129,11 +129,11 @@ class RemoteSyncService:
             try:
                 if item.get("type") == "photo":
                     meta = json.loads(item["payload_json"])
-                    file_name = meta.pop("file_name", path)
+                    file_name = meta.get("file_name") or item["file_path"].split("/")[-1]
                     with open(item["file_path"], "rb") as f:
                         file_bytes = f.read()
                     files = {"file": (file_name, file_bytes, "image/jpeg")}
-                    data  = {"file_name": file_name, "metadata": json.dumps(meta, ensure_ascii=False)}
+                    data  = {"metadata": json.dumps(meta, ensure_ascii=False)}
                     async with httpx.AsyncClient(timeout=60) as client:
                         r = await client.post(
                             f"{self._base_url}/api/photos",
