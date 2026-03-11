@@ -82,14 +82,14 @@ class Scheduler:
         from zoneinfo import ZoneInfo
         tz = ZoneInfo(self._config.agent.timezone)
         now_local = datetime.now(tz=tz)
-        now_utc = datetime.now(timezone.utc)
 
-        # fetch_weather — keyed by UTC hour
-        current_hour_utc = now_utc.hour
-        if current_hour_utc in self._config.weather.schedule_hours and current_hour_utc != self._last_weather_hour:
-            self._last_weather_hour = current_hour_utc
+        current_hour_local = now_local.hour
+
+        # fetch_weather — keyed by local hour
+        if current_hour_local in self._config.weather.schedule_hours and current_hour_local != self._last_weather_hour:
+            self._last_weather_hour = current_hour_local
             await tasks_repo.insert("fetch_weather", {}, source="scheduler")
-            logger.info("Scheduler: queued fetch_weather for UTC hour %s", current_hour_utc)
+            logger.info("Scheduler: queued fetch_weather for local hour %s", current_hour_local)
 
         # create_reflection — once per day at configured local hour
         today_str = now_local.strftime("%Y-%m-%d")
@@ -103,15 +103,15 @@ class Scheduler:
                 logger.info("Scheduler: reflection for %s already exists — skipping", today_str)
             self._last_reflection_date = today_str
 
-        # analyze_route — every N hours at configured UTC hours
+        # analyze_route — every N hours at configured local hours
         cfg_ra = self._config.route_analysis
-        if (current_hour_utc in cfg_ra.schedule_hours
-                and current_hour_utc != self._last_route_analysis_hour):
-            self._last_route_analysis_hour = current_hour_utc
+        if (current_hour_local in cfg_ra.schedule_hours
+                and current_hour_local != self._last_route_analysis_hour):
+            self._last_route_analysis_hour = current_hour_local
             await tasks_repo.insert(
                 "analyze_route",
                 {"hours": cfg_ra.window_hours},
                 source="scheduler",
             )
-            logger.info("Scheduler: queued analyze_route (window=%sh) at UTC hour %s",
-                        cfg_ra.window_hours, current_hour_utc)
+            logger.info("Scheduler: queued analyze_route (window=%sh) at local hour %s",
+                        cfg_ra.window_hours, current_hour_local)

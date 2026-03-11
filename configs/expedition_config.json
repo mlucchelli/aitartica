@@ -229,10 +229,10 @@
     "latitude": -62.15,
     "longitude": -58.45,
     "schedule_hours": [
-      6,
-      12,
-      18,
-      0
+      3,
+      9,
+      15,
+      21
     ]
   },
   "remote_sync": {
@@ -255,8 +255,8 @@
   },
   "route_analysis": {
     "schedule_hours": [
-      0,
-      12
+      9,
+      21
     ],
     "window_hours": 12,
     "min_points": 3

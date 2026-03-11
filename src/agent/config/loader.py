@@ -102,7 +102,7 @@ class ReflectionConfig(BaseModel):
 
 
 class RouteAnalysisConfig(BaseModel):
-    schedule_hours: list[int] = Field(default_factory=lambda: [0, 12])  # UTC hours to trigger
+    schedule_hours: list[int] = Field(default_factory=lambda: [9, 21])  # local hours to trigger
     window_hours: int = 12  # how many hours of GPS history to analyze
     min_points: int = 3     # skip if fewer points in window
 
