@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from agent.db.database import Database
+from agent.utils.tz import day_utc_bounds, today_arg
 
 
 class PhotosRepository:
@@ -49,8 +50,9 @@ class PhotosRepository:
             conditions.append("is_remote_candidate = ?")
             params.append(1 if is_remote_candidate else 0)
         if date is not None:
-            conditions.append("date(discovered_at) = ?")
-            params.append(date)
+            start, end = day_utc_bounds(date)
+            conditions.append("discovered_at >= ? AND discovered_at < ?")
+            params.extend([start, end])
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         async with self._db.conn.execute(
             f"SELECT * FROM photos {where} ORDER BY discovered_at DESC", params
@@ -77,10 +79,10 @@ class PhotosRepository:
         return row[0] if row else 0
 
     async def count_uploaded_today(self) -> int:
-        today = datetime.now(timezone.utc).date().isoformat()
+        start, end = day_utc_bounds(today_arg())
         async with self._db.conn.execute(
-            "SELECT COUNT(*) FROM photos WHERE remote_uploaded = 1 AND date(remote_uploaded_at) = ?",
-            (today,),
+            "SELECT COUNT(*) FROM photos WHERE remote_uploaded = 1 AND remote_uploaded_at >= ? AND remote_uploaded_at < ?",
+            (start, end),
         ) as cur:
             row = await cur.fetchone()
         return row[0] if row else 0

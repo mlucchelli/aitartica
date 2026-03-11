@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 
 from agent.db.database import Database
+from agent.utils.tz import day_utc_bounds, today_arg
 
 
 class WeatherRepository:
@@ -81,13 +82,14 @@ class WeatherRepository:
         return {"min": row[0], "max": row[1]}
 
     async def get_today(self) -> list[dict]:
-        today = datetime.now(timezone.utc).date().isoformat()
-        return await self.get_by_date(today)
+        return await self.get_by_date(today_arg())
 
     async def get_by_date(self, date: str) -> list[dict]:
+        """date: YYYY-MM-DD in agent timezone"""
+        start, end = day_utc_bounds(date)
         async with self._db.conn.execute(
-            "SELECT * FROM weather_snapshots WHERE date(recorded_at) = ? ORDER BY recorded_at ASC",
-            (date,),
+            "SELECT * FROM weather_snapshots WHERE recorded_at >= ? AND recorded_at < ? ORDER BY recorded_at ASC",
+            (start, end),
         ) as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]

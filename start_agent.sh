@@ -43,7 +43,7 @@ load_model() {
 
 echo "Pre-loading models:"
 load_model "qwen3.5:9b"
-load_model "qwen2.5vl:7b"
+load_model "qwen2.5vl:3b"
 
 # Embedding models use /api/embed, not /api/generate
 echo -n "  Loading nomic-embed-text ... "

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from agent.db.database import Database
+from agent.utils.tz import day_utc_bounds, today_arg
 
 
 class ActivityLogsRepository:
@@ -33,10 +34,10 @@ class ActivityLogsRepository:
         }
 
     async def get_network_count_today(self) -> int:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        start, end = day_utc_bounds(today_arg())
         async with self._db.conn.execute(
-            "SELECT COUNT(*) FROM activity_logs WHERE is_network=1 AND date(created_at)=?",
-            (today,),
+            "SELECT COUNT(*) FROM activity_logs WHERE is_network=1 AND created_at >= ? AND created_at < ?",
+            (start, end),
         ) as cur:
             row = await cur.fetchone()
         return row[0] if row else 0
@@ -64,19 +65,19 @@ class ActivityLogsRepository:
         return [dict(r) for r in rows]
 
     async def get_today(self, session_id: str | None = None) -> list[dict]:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        start, end = day_utc_bounds(today_arg())
         if session_id:
             async with self._db.conn.execute(
                 """SELECT * FROM activity_logs
-                   WHERE created_at >= ? AND session_id = ?
+                   WHERE created_at >= ? AND created_at < ? AND session_id = ?
                    ORDER BY created_at ASC""",
-                (today, session_id),
+                (start, end, session_id),
             ) as cur:
                 rows = await cur.fetchall()
         else:
             async with self._db.conn.execute(
-                "SELECT * FROM activity_logs WHERE created_at >= ? ORDER BY created_at ASC",
-                (today,),
+                "SELECT * FROM activity_logs WHERE created_at >= ? AND created_at < ? ORDER BY created_at ASC",
+                (start, end),
             ) as cur:
                 rows = await cur.fetchall()
         return [dict(r) for r in rows]

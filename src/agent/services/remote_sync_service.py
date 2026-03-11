@@ -73,7 +73,7 @@ class RemoteSyncService:
             with open(file_path, "rb") as f:
                 file_bytes = f.read()
             files = {"file": (file_name, file_bytes, "image/jpeg")}
-            data  = {"metadata": json.dumps(metadata, ensure_ascii=False)}
+            data  = {"file_name": file_name, "metadata": json.dumps(metadata, ensure_ascii=False)}
             async with httpx.AsyncClient(timeout=60) as client:
                 r = await client.post(
                     f"{self._base_url}/api/photos",
@@ -85,6 +85,14 @@ class RemoteSyncService:
             file_url = r.json().get("file_url")
             logger.info("sync OK  /api/photos (%s) → %s", file_name, file_url)
             return {"ok": True, "file_url": file_url}
+        except httpx.HTTPStatusError as exc:
+            error = str(exc)
+            body = exc.response.text[:500] if exc.response.text else "(empty)"
+            logger.warning("sync FAIL /api/photos (%s) — %s | response body: %s", file_name, error, body)
+            if self._db:
+                await self._enqueue_photo(file_path, file_name, metadata, error)
+                return {"ok": True, "queued": True}
+            return {"ok": False, "error": error}
         except Exception as exc:
             error = str(exc)
             logger.warning("sync FAIL /api/photos (%s) — %s", file_name, error)
@@ -125,7 +133,7 @@ class RemoteSyncService:
                     with open(item["file_path"], "rb") as f:
                         file_bytes = f.read()
                     files = {"file": (file_name, file_bytes, "image/jpeg")}
-                    data  = {"metadata": json.dumps(meta, ensure_ascii=False)}
+                    data  = {"file_name": file_name, "metadata": json.dumps(meta, ensure_ascii=False)}
                     async with httpx.AsyncClient(timeout=60) as client:
                         r = await client.post(
                             f"{self._base_url}/api/photos",
@@ -141,6 +149,15 @@ class RemoteSyncService:
                         r.raise_for_status()
                 await repo.mark_sent(item["id"])
                 logger.info("sync retry OK  %s (attempt %d)", path, attempt)
+            except httpx.HTTPStatusError as exc:
+                error = str(exc)
+                body = exc.response.text[:500] if exc.response.text else "(empty)"
+                await repo.record_attempt(item["id"], error)
+                remaining = item["max_attempts"] - attempt
+                if remaining > 0:
+                    logger.warning("sync retry FAIL %s (attempt %d, %d left) — %s | response body: %s", path, attempt, remaining, error, body)
+                else:
+                    logger.error("sync retry GIVE UP %s after %d attempts — %s | response body: %s", path, attempt, error, body)
             except Exception as exc:
                 error = str(exc)
                 await repo.record_attempt(item["id"], error)

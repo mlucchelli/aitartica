@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from agent.db.database import Database
+from agent.utils.tz import day_utc_bounds, today_arg
 
 
 class MessagesRepository:
@@ -29,22 +30,23 @@ class MessagesRepository:
         return dict(row) if row else None
 
     async def get_today(self, session_id: str | None = None) -> list[dict]:
-        today = datetime.now(timezone.utc).date().isoformat()
-        return await self.get_by_date(today, session_id=session_id)
+        return await self.get_by_date(today_arg(), session_id=session_id)
 
     async def get_by_date(self, date: str, session_id: str | None = None) -> list[dict]:
+        """date: YYYY-MM-DD in agent timezone"""
+        start, end = day_utc_bounds(date)
         if session_id:
             async with self._db.conn.execute(
                 """SELECT * FROM agent_messages
-                   WHERE date(timestamp) = ? AND session_id = ?
+                   WHERE timestamp >= ? AND timestamp < ? AND session_id = ?
                    ORDER BY timestamp ASC""",
-                (date, session_id),
+                (start, end, session_id),
             ) as cur:
                 rows = await cur.fetchall()
         else:
             async with self._db.conn.execute(
-                "SELECT * FROM agent_messages WHERE date(timestamp) = ? ORDER BY timestamp ASC",
-                (date,),
+                "SELECT * FROM agent_messages WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp ASC",
+                (start, end),
             ) as cur:
                 rows = await cur.fetchall()
         return [dict(r) for r in rows]

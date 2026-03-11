@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 
 from agent.config.loader import Config
+from agent.utils.tz import AGENT_TZ
 from agent.models.state import ConversationState
 
 
@@ -14,7 +15,7 @@ class PromptBuilder:
     def build(self, state: ConversationState) -> str:
         template = self._config.system_prompt.template
 
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        now = datetime.now(AGENT_TZ).strftime("%Y-%m-%d %H:%M:%S") + " (hora local Argentina)"
 
         replacements = {
             "{current_datetime}": now,

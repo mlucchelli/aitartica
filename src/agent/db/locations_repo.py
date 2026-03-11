@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from agent.db.database import Database
+from agent.utils.tz import day_utc_bounds
 
 
 class LocationsRepository:
@@ -35,10 +36,11 @@ class LocationsRepository:
         return [dict(r) for r in rows]
 
     async def get_by_date(self, date: str) -> list[dict]:
-        """date: YYYY-MM-DD"""
+        """date: YYYY-MM-DD in agent timezone"""
+        start, end = day_utc_bounds(date)
         async with self._db.conn.execute(
-            "SELECT * FROM locations WHERE date(recorded_at) = ? ORDER BY recorded_at ASC",
-            (date,),
+            "SELECT * FROM locations WHERE recorded_at >= ? AND recorded_at < ? ORDER BY recorded_at ASC",
+            (start, end),
         ) as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
