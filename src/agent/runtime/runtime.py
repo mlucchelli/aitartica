@@ -89,6 +89,16 @@ class Runtime:
             docs = await repo.get_all(status="indexed")
             state.metadata["knowledge_docs"] = [d["file_name"] for d in docs]
 
+            # Inject latest GPS position into state for the system prompt
+            rows = await LocationsRepository(self._db).get_latest(limit=1)
+            if rows:
+                loc = rows[0]
+                state.metadata["current_position"] = {
+                    "latitude":    loc["latitude"],
+                    "longitude":   loc["longitude"],
+                    "recorded_at": loc["recorded_at"],
+                }
+
         system_prompt = self._prompt_builder.build(state)
         state.add_message("user", user_message)
 

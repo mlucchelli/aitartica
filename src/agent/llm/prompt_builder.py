@@ -51,7 +51,15 @@ class PromptBuilder:
         return template
 
     def _build_state_context(self, state: ConversationState) -> str:
-        return (
-            f"Session: {state.session_id}\n"
-            f"Messages in context: {len(state.messages)}"
-        )
+        lines = [
+            f"Session: {state.session_id}",
+            f"Messages in context: {len(state.messages)}",
+        ]
+        pos = state.metadata.get("current_position")
+        if pos:
+            lines.append(
+                f"Current position (latest GPS fix): lat={pos['latitude']}, lon={pos['longitude']} — recorded at {pos['recorded_at']}"
+            )
+        else:
+            lines.append("Current position: no GPS fix recorded yet")
+        return "\n".join(lines)
