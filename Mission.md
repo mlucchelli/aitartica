@@ -56,6 +56,8 @@ Sends to LLM with a reflection prompt: 150–300 words, in the agent's voice. Sa
 
 ### On every new photo (triggered by `process_photo` task)
 
+Photos dropped in `data/photos/inbox/` are picked up by `scan_photo_inbox` (manual or scheduled), which queues a `process_photo` task per photo. The scheduler runs each task automatically — no human intervention needed.
+
 1. EXIF orientation correction + resize (longest side 640–800px) → preview JPEG
 2. Single vision model call (`qwen2.5vl:3b`): returns structured JSON with:
    - `vision_description` — detailed field observation (5–7 sentences, taxonomic precision)
@@ -64,6 +66,7 @@ Sends to LLM with a reflection prompt: 150–300 words, in the agent's voice. Sa
    - `tags` — 1–5 tags from controlled vocabulary
 3. GPS coordinates attached from latest location at processing time
 4. If score ≥ 0.75: flagged as remote candidate, `upload_image` task auto-queued
+5. After successful upload: `publish_daily_progress` queued immediately (no waiting for the 9h/21h schedule)
 
 ---
 
@@ -144,7 +147,9 @@ Manual publish triggers (also run automatically on schedule):
 
 ### Live dispatches
 
-The `comment` action posts a short message directly to the expedition website — visible to the public in real time. The agent uses this freely when something happens worth sharing: a landing, a wildlife encounter, an extreme weather event, a remarkable moment.
+The `comment` action posts a short message to the expedition website **and to X (Twitter)** — visible to the public in real time. The agent uses this freely when something happens worth sharing: a landing, a wildlife encounter, an extreme weather event, a remarkable moment.
+
+The agent writes as a **witness**, not a system log. It speaks about what it *saw*, not what it *did*. Never "Photo inbox scanned." Always the subject: the ice, the animal, the moment. Short, dense, under 280 characters when possible.
 
 > "Send a dispatch: zodiac landing confirmed at Brown Bluff, first human steps here in three years"
 
@@ -202,6 +207,7 @@ All failed pushes are queued in `sync_queue` and retried automatically (up to 10
 - `expedition_day` — days since start (from `start_date` in config)
 - `distance_km_total` — Haversine sum of all GPS points
 - `photos_captured_total` — all fully processed photos
+- `photos_uploaded_total` — photos successfully uploaded to the expedition site
 - `wildlife_spotted_total` — photos tagged with "wildlife"
 - `temperature_min/max_all_time` — across all weather snapshots
 - `current_position` — latest GPS fix
@@ -218,23 +224,33 @@ All failed pushes are queued in `sync_queue` and retried automatically (up to 10
 - Full list of available actions with descriptions and parameters
 - Knowledge base document names (not content — search is on demand)
 - Current session state (session ID, messages in context)
+- **Current GPS position** — latest fix injected at the start of every LLM call (no tool call needed)
 
 ### What the agent does NOT know without calling tools
 
-- Current GPS position (must call `get_latest_locations`)
-- Current weather (must call `get_weather` or `get_latest_locations`)
+- Current weather (must call `get_weather` — uses latest GPS automatically if no coords passed)
 - Today's photos (must call `get_photos`)
 - Distance traveled (must call `get_distance`)
 - Route analysis (must call `analyze_route` then `get_route_analysis`)
 - Knowledge base content (must call `search_knowledge`)
+- GPS history / multiple points (must call `get_latest_locations` or `get_locations_by_date`)
 
-### Chain depth considerations
+### Chain depth and sequencing
 
-Max depth is 6. Complex workflows that require many tool calls can hit the limit:
-- "Publish everything" — needs analyze_route + get_route_analysis + publish_route_analysis + publish_route_snapshot + publish_weather_snapshot + publish_daily_progress = 6 tools minimum
-- "Write and publish a reflection" — `publish_reflection` handles this in one action (the service gathers all data internally)
+Max depth is **15**. The agent is instructed to:
+- Open multi-step tasks (3+ dependent steps) with a `send_message` plan
+- Execute **one tool per response** when steps depend on each other — never batch tools whose output feeds the next call
+- Stop as soon as the task is done — do not keep chaining unrelated context
 
-Prefer actions that encapsulate multi-step logic (like `publish_reflection`) over sequences of primitive tools when depth is a concern.
+Example correct flow for "scan inbox and comment":
+```
+depth 0 → send_message("Plan: scan → review → comment")
+depth 1 → scan_photo_inbox
+depth 2 → get_photos
+depth 3 → comment("..."), finish
+```
+
+Prefer actions that encapsulate multi-step logic (like `publish_reflection`) over sequences of primitive tools.
 
 ### Voice and behavior anchors
 
