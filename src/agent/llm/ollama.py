@@ -10,20 +10,21 @@ from agent.config.loader import Config
 
 logger = logging.getLogger(__name__)
 
-_FORMAT_EXAMPLE = """\
-You MUST respond with a JSON object that strictly follows this schema:
-{"actions": [{"type": "<action_type>", "payload": {...}}]}
+_FORMAT_REMINDER = """\
+Respond with a JSON object. Required fields: "thought" (one or two sentences of internal reasoning) and "actions" (array of tool calls). Every chain MUST end with a "finish" action.
 
-Every response must contain exactly one or more actions. The last action MUST be "send_message".
+Example (tool call then finish):
+{"thought": "I need to check the weather first.", "actions": [{"type": "get_weather", "payload": {}}, {"type": "finish", "payload": {}}]}
 
-Example:
-{"actions": [{"type": "send_message", "payload": {"content": "Hello."}}]}"""
+Example (direct answer):
+{"thought": "I know the answer from context.", "actions": [{"type": "send_message", "payload": {"content": "The ship is MV Ortelius."}}, {"type": "finish", "payload": {}}]}"""
 
 
 class OllamaClient:
     def __init__(self, config: Config) -> None:
         self._model = config.agent.model
         self._temperature = config.agent.temperature
+        self._max_tokens = config.agent.max_tokens
         self._base_url = config.photo_pipeline.ollama_url
 
     async def ainvoke(
@@ -33,21 +34,18 @@ class OllamaClient:
         # for native structured output enforcement.
         schema = response_format.get("json_schema", {}).get("schema", None)
 
-        # Inject the format reminder into the last user message so the model
-        # sees a concrete example immediately before generating.
+        # Inject the format reminder before the final generation step.
+        # Always appended as a user message so it works at any chain depth,
+        # including after tool results (which arrive as role="tool").
         augmented = list(messages)
-        if augmented and augmented[-1]["role"] == "user":
-            augmented[-1] = {
-                "role": "user",
-                "content": augmented[-1]["content"] + "\n\n" + _FORMAT_EXAMPLE,
-            }
+        augmented.append({"role": "user", "content": _FORMAT_REMINDER})
 
         body: dict[str, Any] = {
             "model": self._model,
             "messages": augmented,
             "stream": False,
             "format": schema if schema else "json",
-            "options": {"temperature": self._temperature},
+            "options": {"temperature": self._temperature, "num_predict": self._max_tokens, "num_ctx": 8192},
         }
 
         async with httpx.AsyncClient() as client:

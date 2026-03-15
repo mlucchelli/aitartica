@@ -31,6 +31,7 @@ RESPONSE_FORMAT: dict[str, Any] = {
         "schema": {
             "type": "object",
             "properties": {
+                "thought": {"type": "string"},
                 "actions": {
                     "type": "array",
                     "items": {
@@ -43,7 +44,7 @@ RESPONSE_FORMAT: dict[str, Any] = {
                     },
                 },
             },
-            "required": ["actions"],
+            "required": ["thought", "actions"],
             "additionalProperties": False,
         },
     },
@@ -113,13 +114,23 @@ class Runtime:
         for depth in range(max_depth):
             self._output.on_llm_start(depth)
             logger.info("LLM invoke depth=%d session=%s", depth, session_id)
+            t0 = __import__("time").monotonic()
             response = await self._llm.ainvoke(messages, RESPONSE_FORMAT)
+            elapsed = __import__("time").monotonic() - t0
             usage = response.get("_usage", {})  # read before on_llm_response pops it
+            thought = response.get("thought", "")
             self._output.on_llm_response(response)
+            if thought:
+                self._output.on_llm_thought(thought, depth)
+            completion_tokens = usage.get("completion_tokens", 0)
+            tok_per_sec = completion_tokens / elapsed if elapsed > 0 else 0
             logger.info(
-                "LLM response depth=%d tokens=%d actions=%s",
+                "LLM response depth=%d prompt=%d completion=%d elapsed=%.1fs tok/s=%.1f actions=%s",
                 depth,
-                usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
+                usage.get("prompt_tokens", 0),
+                completion_tokens,
+                elapsed,
+                tok_per_sec,
                 [a.get("type") for a in self._extract_actions(response)],
             )
             await self._log_tokens(
@@ -136,14 +147,17 @@ class Runtime:
             # send_message only auto-finishes when no tool calls are pending in the same batch
             has_tool_actions = any(isinstance(a, ToolAction) for a in actions)
 
-            # Execute all actions in order
+            # Execute all actions in order.
+            # If finish and tool calls appear together, defer finish — the tool
+            # result needs another LLM pass before the chain can terminate.
             finish = False
             did_something = False
             for action in actions:
                 self._output.on_action_start(action.type)
                 logger.info("Action: %s session=%s depth=%d", action.type, session_id, depth)
                 if isinstance(action, FinishAction):
-                    finish = True
+                    if not has_tool_actions:
+                        finish = True
                     did_something = True
                 elif isinstance(action, SendMessageAction):
                     result = await action.execute(state)
@@ -359,14 +373,26 @@ class Runtime:
         svc = PhotoService(self._config, db, self._output)
         new_count = await svc.scan_inbox()
 
-        # Process all pending + stuck-analyzing photos
+        # Process all pending + stuck-analyzing photos inline.
+        # After success, mark the corresponding process_photo task completed so
+        # the scheduler does not attempt to re-process the already-moved file.
         to_process = await PhotosRepository(db).get_all(vision_status="pending")
         stuck = await PhotosRepository(db).get_all(vision_status="analyzing")
         to_process = to_process + stuck
+        tasks_repo = TasksRepository(db)
         failed = 0
         for photo in to_process:
             try:
                 await svc.process_photo(photo["id"])
+                # Mark the queued task done so the scheduler skips it
+                async with db.conn.execute(
+                    "SELECT id FROM tasks WHERE type='process_photo' AND status='pending'"
+                    " AND json_extract(payload,'$.photo_id')=?",
+                    (photo["id"],),
+                ) as cur:
+                    row = await cur.fetchone()
+                if row:
+                    await tasks_repo.complete(row[0])
             except Exception as exc:
                 failed += 1
                 logger.warning("process_photo id=%s failed: %s", photo["id"], exc)

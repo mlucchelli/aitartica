@@ -51,6 +51,7 @@ class RemoteSyncService:
         headers = {**self._headers(), "Content-Type": "application/json"}
         self._notify_start()
         try:
+            logger.info("sync →   %s payload=%s", path, json.dumps(payload, ensure_ascii=False))
             async with httpx.AsyncClient(timeout=30) as client:
                 r = await client.post(f"{self._base_url}{path}", json=payload, headers=headers)
                 r.raise_for_status()
@@ -70,6 +71,7 @@ class RemoteSyncService:
         """Multipart POST for /api/photos. On failure queues for retry if DB available."""
         self._notify_start()
         try:
+            logger.info("sync →   /api/photos file=%s metadata=%s", file_name, json.dumps(metadata, ensure_ascii=False))
             with open(file_path, "rb") as f:
                 file_bytes = f.read()
             files = {"file": (file_name, file_bytes, "image/jpeg")}
@@ -130,6 +132,7 @@ class RemoteSyncService:
                 if item.get("type") == "photo":
                     meta = json.loads(item["payload_json"])
                     file_name = meta.get("file_name") or item["file_path"].split("/")[-1]
+                    logger.info("sync retry → /api/photos file=%s metadata=%s", file_name, item["payload_json"])
                     with open(item["file_path"], "rb") as f:
                         file_bytes = f.read()
                     files = {"file": (file_name, file_bytes, "image/jpeg")}
@@ -144,6 +147,7 @@ class RemoteSyncService:
                         r.raise_for_status()
                 else:
                     payload = json.loads(item["payload_json"])
+                    logger.info("sync retry → %s payload=%s", path, item["payload_json"])
                     async with httpx.AsyncClient(timeout=30) as client:
                         r = await client.post(f"{self._base_url}{path}", json=payload, headers=json_headers)
                         r.raise_for_status()

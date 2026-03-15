@@ -50,7 +50,7 @@ class PhotoService:
         tasks_repo = TasksRepository(self._db)
 
         image_files: list[Path] = []
-        for pattern in ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG", "*.webp", "*.WEBP"):
+        for pattern in ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG", "*.webp", "*.WEBP", "*.heic", "*.HEIC", "*.heif", "*.HEIF"):
             image_files.extend(self._inbox.glob(pattern))
 
         logger.info("Photo inbox: scanning %s — %d file(s) found", self._inbox.resolve(), len(image_files))

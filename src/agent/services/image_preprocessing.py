@@ -4,7 +4,10 @@ import hashlib
 import logging
 from pathlib import Path
 
+import pillow_heif
 from PIL import Image, ImageOps
+
+pillow_heif.register_heif_opener()
 
 from agent.config.loader import Config
 
