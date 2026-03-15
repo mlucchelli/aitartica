@@ -85,11 +85,20 @@ class Scheduler:
 
         current_hour_local = now_local.hour
 
-        # fetch_weather — keyed by local hour
+        # fetch_weather — keyed by local hour; check DB to survive restarts
         if current_hour_local in self._config.weather.schedule_hours and current_hour_local != self._last_weather_hour:
+            hour_start = now_local.replace(minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+            async with self._db.conn.execute(
+                "SELECT 1 FROM tasks WHERE type='fetch_weather' AND created_at >= ? LIMIT 1",
+                (hour_start,),
+            ) as cur:
+                already = await cur.fetchone()
+            if not already:
+                await tasks_repo.insert("fetch_weather", {}, source="scheduler")
+                logger.info("Scheduler: queued fetch_weather for local hour %s", current_hour_local)
+            else:
+                logger.info("Scheduler: fetch_weather already queued for hour %s — skipping", current_hour_local)
             self._last_weather_hour = current_hour_local
-            await tasks_repo.insert("fetch_weather", {}, source="scheduler")
-            logger.info("Scheduler: queued fetch_weather for local hour %s", current_hour_local)
 
         # create_reflection — once per day at configured local hour
         today_str = now_local.strftime("%Y-%m-%d")
@@ -103,15 +112,24 @@ class Scheduler:
                 logger.info("Scheduler: reflection for %s already exists — skipping", today_str)
             self._last_reflection_date = today_str
 
-        # analyze_route — every N hours at configured local hours
+        # analyze_route — every N hours at configured local hours; check DB to survive restarts
         cfg_ra = self._config.route_analysis
         if (current_hour_local in cfg_ra.schedule_hours
                 and current_hour_local != self._last_route_analysis_hour):
+            hour_start_ra = now_local.replace(minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+            async with self._db.conn.execute(
+                "SELECT 1 FROM tasks WHERE type='analyze_route' AND created_at >= ? LIMIT 1",
+                (hour_start_ra,),
+            ) as cur:
+                already_ra = await cur.fetchone()
+            if not already_ra:
+                await tasks_repo.insert(
+                    "analyze_route",
+                    {"hours": cfg_ra.window_hours},
+                    source="scheduler",
+                )
+                logger.info("Scheduler: queued analyze_route (window=%sh) at local hour %s",
+                            cfg_ra.window_hours, current_hour_local)
+            else:
+                logger.info("Scheduler: analyze_route already queued for hour %s — skipping", current_hour_local)
             self._last_route_analysis_hour = current_hour_local
-            await tasks_repo.insert(
-                "analyze_route",
-                {"hours": cfg_ra.window_hours},
-                source="scheduler",
-            )
-            logger.info("Scheduler: queued analyze_route (window=%sh) at local hour %s",
-                        cfg_ra.window_hours, current_hour_local)
