@@ -14,7 +14,7 @@ VALID_TAGS: frozenset[str] = frozenset({
     "sea-ice", "glacier", "mountain", "beach", "underwater",
     "weather", "storm", "fog", "aurora", "sunset", "sunrise",
     "human", "ship", "zodiac", "equipment", "science", "landing",
-    "antartia", "base",
+    "aitartica", "base",
 })
 from agent.db.database import Database
 from agent.db.photos_repo import PhotosRepository
