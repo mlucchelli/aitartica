@@ -117,9 +117,11 @@ class ReflectionService:
         weather_summary = "No weather data recorded today."
         if weather_snapshots:
             w = weather_snapshots[-1]
+            temps = [s["temperature"] for s in weather_snapshots if s.get("temperature") is not None]
+            temp_min = min(temps) if temps else None
             weather_summary = (
                 f"  Temperature:  {w.get('temperature')}°C "
-                f"(feels like {w.get('apparent_temperature')}°C)\n"
+                f"(day low {temp_min}°C, feels like {w.get('apparent_temperature')}°C)\n"
                 f"  Wind:         {w.get('wind_speed')} km/h "
                 f"(gusts {w.get('wind_gusts')} km/h), {w.get('condition', 'unknown')}\n"
                 f"  Precipitation:{w.get('precipitation')} mm  "
