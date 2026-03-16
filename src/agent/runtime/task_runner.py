@@ -169,6 +169,21 @@ class TaskRunner:
         position       = {"latitude": latest[0]["latitude"], "longitude": latest[0]["longitude"]} if latest else None
         tokens         = await TokenUsageRepository(self._db).get_total()
 
+        # nearest/current named location
+        nearest_location_name = None
+        nearest_location_km   = None
+        if position:
+            from agent.services.route_analysis_service import LANDING_SITES, _haversine, _AT_LOCATION_THRESHOLD_KM
+            sites = sorted(
+                [{"name": s["name"], "dist": round(_haversine(position["latitude"], position["longitude"], s["lat"], s["lon"]), 1)} for s in LANDING_SITES],
+                key=lambda x: x["dist"],
+            )
+            if sites:
+                nearest_location_name = sites[0]["name"]
+                nearest_location_km   = sites[0]["dist"]
+                if sites[0]["dist"] <= _AT_LOCATION_THRESHOLD_KM:
+                    nearest_location_name = f"at {sites[0]['name']}"
+
         result = await RemoteSyncService(self._config, self._output, self._db).push("/api/progress", {
             "expedition_day":           exp_day,
             "distance_km_total":        round(total_km, 2),
@@ -178,6 +193,8 @@ class TaskRunner:
             "temperature_min_all_time": temps["min"],
             "temperature_max_all_time": temps["max"],
             "current_position":         position,
+            "nearest_location_name":    nearest_location_name,
+            "nearest_location_km":      nearest_location_km,
             "tokens_used_total":        tokens["total"],
             "published_at":             datetime.now(timezone.utc).isoformat(),
         })

@@ -68,6 +68,7 @@ A strong reflection makes the reader feel what kind of day it was — not what o
 --- DATA FROM TODAY ({date}) ---
 GPS positions recorded: {location_count}
 Distance traveled:      {km} km
+Current position:       {current_position}
 
 Weather:
 {weather_summary}
@@ -80,6 +81,9 @@ Messages sent to the outside world: {message_count}
 
 Agent activity ({log_count} actions logged):
 {activity_summary}
+
+Nearby known locations (for geographic reference only — do not list or describe these):
+{nearby_locations}
 --------------------------------
 
 Write the reflection now.\
@@ -153,6 +157,23 @@ class ReflectionService:
                 f"{t} ×{n}" for t, n in counts.most_common(10)
             )
 
+        # Current position + nearby locations
+        from agent.services.route_analysis_service import LANDING_SITES, _haversine
+        current_position = "unknown"
+        nearby_locations = "  No GPS data."
+        if locations:
+            lat = locations[-1]["latitude"]
+            lon = locations[-1]["longitude"]
+            current_position = f"{lat:.4f}, {lon:.4f}"
+            sites = sorted(
+                [{"name": s["name"], "dist": round(_haversine(lat, lon, s["lat"], s["lon"]), 1)} for s in LANDING_SITES],
+                key=lambda x: x["dist"],
+            )[:3]
+            if sites[0]["dist"] <= 2.0:
+                nearby_locations = f"  At: {sites[0]['name']} ({sites[0]['dist']} km)"
+            else:
+                nearby_locations = "\n".join(f"  {s['name']}: {s['dist']} km" for s in sites)
+
         cfg    = self._config.reflection
         prompt = _REFLECTION_PROMPT.format(
             agent_name      = self._config.agent.name,
@@ -168,6 +189,8 @@ class ReflectionService:
             messages_summary= messages_summary,
             log_count       = len(logs),
             activity_summary= activity_summary,
+            current_position= current_position,
+            nearby_locations= nearby_locations,
         )
 
         self._output.on_task_progress("reflection: calling LLM...")

@@ -30,6 +30,8 @@ LANDING_SITES: list[dict] = [
 _COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
             "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
 
+_AT_LOCATION_THRESHOLD_KM = 2.0
+
 
 @dataclass
 class NearestSite:
@@ -62,12 +64,16 @@ class RouteAnalysis:
     # defaults
     window_hours: int = 12
     nearest_sites: list[NearestSite] = field(default_factory=list)
+    at_named_location: str | None = None  # set when nearest site <= _AT_LOCATION_THRESHOLD_KM
 
     def to_text(self) -> str:
         lines: list[str] = []
         lines.append(f"Route analysis — {self.analyzed_at} UTC  (last {self.window_hours}h)")
         if self.latitude is not None:
-            lines.append(f"Position: {self.latitude:.4f}, {self.longitude:.4f}  ({self.point_count} fix(es) today)")
+            pos = f"Position: {self.latitude:.4f}, {self.longitude:.4f}  ({self.point_count} fix(es) today)"
+            if self.at_named_location:
+                pos += f"  →  at {self.at_named_location}"
+            lines.append(pos)
         else:
             lines.append("Position: no GPS data today")
 
@@ -213,6 +219,10 @@ class RouteAnalysisService:
             nearest.sort(key=lambda s: s.distance_km)
             nearest = nearest[:5]
 
+        at_named_location = None
+        if nearest and nearest[0].distance_km <= _AT_LOCATION_THRESHOLD_KM:
+            at_named_location = nearest[0].name
+
         return RouteAnalysis(
             analyzed_at=now_label,
             date=date,
@@ -230,4 +240,5 @@ class RouteAnalysisService:
             wind_direction_deg=wind_dir,
             wind_angle_label=wind_label,
             nearest_sites=nearest,
+            at_named_location=at_named_location,
         )

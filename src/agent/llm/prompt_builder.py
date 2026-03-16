@@ -51,14 +51,26 @@ class PromptBuilder:
         return template
 
     def _build_state_context(self, state: ConversationState) -> str:
+        from agent.services.route_analysis_service import LANDING_SITES, _haversine, _AT_LOCATION_THRESHOLD_KM
         lines = [
             f"Session: {state.session_id}",
             f"Messages in context: {len(state.messages)}",
         ]
         pos = state.metadata.get("current_position")
         if pos:
+            lat, lon = pos["latitude"], pos["longitude"]
+            sites = sorted(
+                [{"name": s["name"], "dist": round(_haversine(lat, lon, s["lat"], s["lon"]), 1)} for s in LANDING_SITES],
+                key=lambda x: x["dist"],
+            )
+            nearest = sites[0]
+            if nearest["dist"] <= _AT_LOCATION_THRESHOLD_KM:
+                location_str = f"at {nearest['name']} ({nearest['dist']} km)"
+            else:
+                location_str = f"{nearest['dist']} km from {nearest['name']}"
             lines.append(
-                f"Current position (latest GPS fix): lat={pos['latitude']}, lon={pos['longitude']} — recorded at {pos['recorded_at']}"
+                f"Current position (latest GPS fix): lat={lat}, lon={lon}"
+                f" — {location_str} — recorded at {pos['recorded_at']}"
             )
         else:
             lines.append("Current position: no GPS fix recorded yet")
