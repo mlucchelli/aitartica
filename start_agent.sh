@@ -76,4 +76,4 @@ mkdir -p "$KNOWLEDGE_INBOX_DIR" "$KNOWLEDGE_PROCESSED_DIR" "$KNOWLEDGE_CHROMA_DI
 echo ""
 echo "Starting AItartica..."
 echo ""
-exec python -m agent --config "$CONFIG" "${@:2}"
+exec caffeinate -i python -m agent --config "$CONFIG" "${@:2}"

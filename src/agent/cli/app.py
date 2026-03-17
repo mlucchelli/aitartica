@@ -61,6 +61,7 @@ class CLI:
         self._weather: dict | None = None
         self._last_location: dict | None = None
         self._location_updated_at: str | None = None
+        self._nearest_location: str | None = None
         self._last_task: dict | None = None    # {type, source, success, at}
         self._running_task: dict | None = None  # {type, source} while executing
         self._semaphore: "ExecutionSemaphore | None" = None
@@ -137,6 +138,15 @@ class CLI:
         if action_type in ("send_message", "finish"):
             return
         self._print_to_scroll(f"  [dim]⟳ {action_type}[/dim]")
+
+    def on_tool_result(self, action_type: str, result: str) -> None:
+        _SKIP = {"send_message", "finish", "upload_image", "publish_reflection",
+                 "publish_daily_progress", "publish_route_analysis", "publish_route_snapshot",
+                 "publish_weather_snapshot", "comment"}
+        if action_type in _SKIP:
+            return
+        first_line = result.split("\n")[0][:120].replace("\n", " ")
+        self._print_to_scroll(f"  [dim]  ↩ {escape(first_line)}[/dim]")
 
     def _print_to_scroll(self, markup: str) -> None:
         """Print into the scroll region using explicit row tracking.
@@ -234,6 +244,13 @@ class CLI:
     def update_location(self, latitude: float, longitude: float) -> None:
         self._last_location = {"latitude": latitude, "longitude": longitude}
         self._location_updated_at = datetime.now().strftime("%d-%m-%y %H:%M")
+        from agent.services.route_analysis_service import LANDING_SITES, _haversine, _AT_LOCATION_THRESHOLD_KM
+        sites = sorted(
+            [{"name": s["name"], "dist": round(_haversine(latitude, longitude, s["lat"], s["lon"]), 1)} for s in LANDING_SITES],
+            key=lambda x: x["dist"],
+        )
+        nearest = sites[0]
+        self._nearest_location = f"{nearest['name']} {nearest['dist']} km"
         self._render_status_bar()
         if self._db:
             try:
@@ -282,6 +299,8 @@ class CLI:
 
         locs = await LocationsRepository(db).get_latest(limit=1)
         self._last_location = locs[0] if locs else None
+        if self._last_location and self._nearest_location is None:
+            self.update_location(self._last_location["latitude"], self._last_location["longitude"])
         self._weather = await WeatherRepository(db).get_latest()
 
         last = await TasksRepository(db).get_last_executed()
@@ -315,8 +334,8 @@ class CLI:
             lat = self._last_location["latitude"]
             lon = self._last_location["longitude"]
             loc_str = f"[cyan]{lat:.3f}, {lon:.3f}[/cyan]"
-            if self._location_updated_at:
-                loc_str += f" [dim]at: {self._location_updated_at}[/dim]"
+            if self._nearest_location:
+                loc_str += f" [dim]({self._nearest_location})[/dim]"
             parts.append(loc_str)
 
         if self._weather:
