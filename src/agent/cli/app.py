@@ -336,6 +336,8 @@ class CLI:
             loc_str = f"[cyan]{lat:.3f}, {lon:.3f}[/cyan]"
             if self._nearest_location:
                 loc_str += f" [dim]({self._nearest_location})[/dim]"
+            if self._location_updated_at:
+                loc_str += f" [dim]at: {self._location_updated_at}[/dim]"
             parts.append(loc_str)
 
         if self._weather:
