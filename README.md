@@ -1,5 +1,7 @@
 # AItartica
 
+**Live expedition site: [aitartica.com](https://aitartica.com)**
+
 An autonomous AI agent built for Antarctic field expeditions. Runs entirely on-device — no cloud dependency for inference — and orchestrates GPS tracking, photo analysis, weather monitoring, knowledge accumulation, and live publishing to an expedition website through a recursive tool-chaining loop driven by a local LLM.
 
 <img width="3024" height="882" alt="image" src="https://github.com/user-attachments/assets/8404b93c-2d19-4f82-a3b9-d987f89f1b60" />
