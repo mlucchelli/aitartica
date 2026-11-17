@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 748" width="1200" height="748" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" role="img" aria-label="AItartica harness map: triggers, execution lock, core loop, state and quality layers">
+<rect width="1200" height="748" rx="18" fill="#0f1b23"/>
+<rect x="250.0" y="36" width="295.3" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="397.7" y="73" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Terminal</text>
+<text x="397.7" y="98" text-anchor="middle" font-size="17" fill="#9db0bd">the user</text>
+<rect x="557.3" y="36" width="295.3" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="705.0" y="73" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Scheduler</text>
+<text x="705.0" y="98" text-anchor="middle" font-size="17" fill="#9db0bd">acts on its own</text>
+<rect x="864.7" y="36" width="295.3" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="1012.3" y="73" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">HTTP</text>
+<text x="1012.3" y="98" text-anchor="middle" font-size="17" fill="#9db0bd">GPS from the phone</text>
+<text x="40" y="84.0" font-size="15" font-weight="700" letter-spacing="2" fill="#9db0bd">TRIGGERS</text>
+<path d="M705.0 128 V148 M699.0 142 L705.0 149 L711.0 142" stroke="#6f8696" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="250.0" y="160" width="910.0" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="705.0" y="197" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Execution lock</text>
+<text x="705.0" y="222" text-anchor="middle" font-size="17" fill="#9db0bd">who gets the model</text>
+<text x="40" y="208.0" font-size="15" font-weight="700" letter-spacing="2" fill="#9db0bd">CONTROL</text>
+<path d="M705.0 252 V272 M699.0 266 L705.0 273 L711.0 266" stroke="#6f8696" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="250.0" y="284" width="218.5" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="359.2" y="321" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Context builder</text>
+<text x="359.2" y="346" text-anchor="middle" font-size="17" fill="#9db0bd">what the model sees</text>
+<rect x="480.5" y="284" width="218.5" height="84" rx="12" fill="#5cc3dd" stroke="#5cc3dd" stroke-width="1.5"/>
+<text x="589.8" y="321" text-anchor="middle" font-size="22" font-weight="600" fill="#06222b">Agent loop</text>
+<text x="589.8" y="346" text-anchor="middle" font-size="17" fill="#0d3642">reason, act, observe</text>
+<rect x="711.0" y="284" width="218.5" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="820.2" y="321" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Structured output</text>
+<text x="820.2" y="346" text-anchor="middle" font-size="17" fill="#9db0bd">schema + validation</text>
+<rect x="941.5" y="284" width="218.5" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="1050.8" y="321" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Tool dispatch</text>
+<text x="1050.8" y="346" text-anchor="middle" font-size="17" fill="#9db0bd">24 tools</text>
+<rect x="250.0" y="380" width="910.0" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="705.0" y="417" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Stop conditions</text>
+<text x="705.0" y="442" text-anchor="middle" font-size="17" fill="#9db0bd">finish, depth budget, fallback</text>
+<text x="40" y="380.0" font-size="15" font-weight="700" letter-spacing="2" fill="#9db0bd">CORE</text>
+<path d="M705.0 472 V492 M699.0 486 L705.0 493 L711.0 486" stroke="#6f8696" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="250.0" y="504" width="449.0" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="474.5" y="541" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Memory</text>
+<text x="474.5" y="566" text-anchor="middle" font-size="17" fill="#9db0bd">session, SQLite, vectors</text>
+<rect x="711.0" y="504" width="449.0" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="935.5" y="541" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Retry queue</text>
+<text x="935.5" y="566" text-anchor="middle" font-size="17" fill="#9db0bd">no data lost offline</text>
+<text x="40" y="552.0" font-size="15" font-weight="700" letter-spacing="2" fill="#9db0bd">STATE</text>
+<path d="M705.0 596 V616 M699.0 610 L705.0 617 L711.0 610" stroke="#6f8696" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="250.0" y="628" width="295.3" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="397.7" y="665" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Policy gates</text>
+<text x="397.7" y="690" text-anchor="middle" font-size="17" fill="#9db0bd">rules outside the model</text>
+<rect x="557.3" y="628" width="295.3" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="705.0" y="665" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Observability</text>
+<text x="705.0" y="690" text-anchor="middle" font-size="17" fill="#9db0bd">logs and tokens</text>
+<rect x="864.7" y="628" width="295.3" height="84" rx="12" fill="#13212b" stroke="#2c4252" stroke-width="1.5"/>
+<text x="1012.3" y="665" text-anchor="middle" font-size="22" font-weight="600" fill="#e6eef3">Evals</text>
+<text x="1012.3" y="690" text-anchor="middle" font-size="17" fill="#9db0bd">40 cases + LLM judge</text>
+<text x="40" y="676.0" font-size="15" font-weight="700" letter-spacing="2" fill="#9db0bd">QUALITY</text>
+</svg>

@@ -20,6 +20,27 @@ The agent doesn't just retrieve data — it **reasons over it**. Ask about today
 
 ## Architecture
 
+### Harness map
+
+No agent framework. The harness — everything around the model that turns it into an agent — is written from scratch.
+
+![AItartica harness map](docs/harness-map.svg)
+
+| Piece | Where | What it does |
+|-------|-------|--------------|
+| Triggers | `cli/app.py`, `runtime/scheduler.py`, `http/server.py` | Three ways in: the user, a 60s scheduler tick, GPS posts from the phone |
+| Execution lock | `runtime/semaphore.py` | One lock, four states. User and scheduler take turns; HTTP ingestion never waits |
+| Context builder | `llm/prompt_builder.py` | Rebuilds the system prompt every turn: local time, position, nearest site, tool definitions |
+| Agent loop | `runtime/runtime.py` | Reason → act → observe, up to `max_chain_depth = 6` |
+| Structured output | `llm/ollama.py`, `runtime/parser.py` | JSON schema at decode time, then Pydantic validation against `ACTION_REGISTRY` |
+| Tool dispatch | `runtime/runtime.py` | 24 tools. A failing tool returns its error to the model as a result |
+| Stop conditions | `runtime/runtime.py` | `finish`, depth budget, or fallback. `finish` is deferred when a data-returning tool runs in the same turn |
+| Memory | `state/`, `db/`, `services/knowledge_service.py` | Session messages, SQLite facts queried through tools, ChromaDB for documents |
+| Retry queue | `services/remote_sync_service.py` | Outbox: every publish is queued locally and retried until the server confirms |
+| Policy gates | `services/photo_service.py` | The model scores a photo; code decides if it is published (score ≥ 0.75) |
+| Observability | `db/activity_logs_repo.py`, `db/token_usage_repo.py` | Every tool call and every token logged. The agent can read both through tools |
+| Evals | `eval/`, `data/evals/` | 40 golden cases: expected tool sequence, required content, must-not rules, LLM judge |
+
 ### Recursive tool chaining
 
 Every user message triggers an LLM call that returns a list of actions. Non-final actions are executed and their results appended to the context. The LLM is re-invoked. This repeats until `finish` — up to `max_chain_depth = 6`. The LLM decides what to fetch and in what order.
